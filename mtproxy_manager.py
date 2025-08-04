@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
 """
-Advanced Multi-MTProto Proxy Manager
-====================================
+Advanced MTProto Proxy Manager for Linux Servers
+================================================
 Complete solution for creating and managing multiple MTProto proxies with 
-sponsored channel support, advanced monitoring, and enterprise features.
+full dependency management, system optimization, and enterprise features.
 
 Features:
+- Complete dependency auto-installation
 - Multi-proxy management (up to 1000 proxies)
-- Sponsored channels integration (@MTProtoBot)
-- Auto dependency installation
-- Beautiful CLI interface
+- Sponsored channels integration
 - Advanced web management interface
 - Real-time monitoring & analytics
-- Automatic optimization
+- Automatic system optimization
 - Docker support
 - Database integration
-- Load balancing
 - Security enhancements
-- API rate limiting
+- Load balancing
 - Performance monitoring
+
+Author: MTProxy Team
+Version: 3.0
+License: MIT
 """
 
 import asyncio
@@ -35,26 +37,25 @@ import socket
 import threading
 import time
 import signal
-import psutil
-import aiohttp
-import ssl
-import base64
-import struct
-import hmac
+import platform
+import shutil
+import urllib.request
+import urllib.parse
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from aiohttp import web, ClientSession
-from aiohttp.web import middleware
-import aiofiles
-import ujson
-import uvloop
+from contextlib import contextmanager
+import tempfile
+import zipfile
+import tarfile
 
-# Enhanced color codes for beautiful output
+# Check Python version
+if sys.version_info < (3, 7):
+    print("❌ Python 3.7 or higher is required!")
+    sys.exit(1)
+
+# Color codes for beautiful output
 class Colors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -65,7 +66,6 @@ class Colors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
-    BLINK = '\033[5m'
 
 def print_colored(text: str, color: str = Colors.ENDC, bold: bool = False):
     """Print colored text with emoji support"""
@@ -76,17 +76,550 @@ def print_banner():
     """Enhanced application banner"""
     banner = """
 ╔══════════════════════════════════════════════════════════════════════════╗
-║ 🚀 Advanced MTProto Proxy Manager v2.0 🚀                               ║
 ║                                                                          ║
-║ ⚡ Multi-Proxy & Sponsored Channels                                      ║
-║ 🛡️  Enterprise Security & Performance                                   ║
-║ 📊 Advanced Analytics & Monitoring                                      ║
-║ 🐳 Docker & Cloud Ready                                                 ║
+║     🚀 Advanced MTProto Proxy Manager v3.0 🚀                           ║
 ║                                                                          ║
-║ Created with Intelligence & Performance in Mind                          ║
+║     ⚡ Complete Linux Server Solution                                    ║
+║     🛡️  Auto Dependency Installation                                    ║
+║     📊 Enterprise Features & Monitoring                                  ║
+║     💰 Sponsored Channels Support                                       ║
+║     🐳 Docker & Cloud Ready                                             ║
+║                                                                          ║
+║     Created for High Performance & Reliability                           ║
+║                                                                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝
     """
     print_colored(banner, Colors.OKCYAN, bold=True)
+
+class SystemInfo:
+    """System information detection and validation"""
+    
+    @staticmethod
+    def get_os_info():
+        """Get detailed OS information"""
+        try:
+            # Try to read /etc/os-release
+            if os.path.exists('/etc/os-release'):
+                with open('/etc/os-release', 'r') as f:
+                    lines = f.readlines()
+                    os_info = {}
+                    for line in lines:
+                        if '=' in line:
+                            key, value = line.strip().split('=', 1)
+                            os_info[key] = value.strip('"')
+                    return os_info
+            
+            # Fallback to platform detection
+            return {
+                'ID': platform.system().lower(),
+                'VERSION_ID': platform.release(),
+                'NAME': platform.platform()
+            }
+        except:
+            return {
+                'ID': 'unknown',
+                'VERSION_ID': 'unknown',
+                'NAME': 'Unknown Linux'
+            }
+    
+    @staticmethod
+    def detect_package_manager():
+        """Detect available package manager"""
+        managers = {
+            'apt': ['/usr/bin/apt', '/usr/bin/apt-get'],
+            'yum': ['/usr/bin/yum', '/bin/yum'],
+            'dnf': ['/usr/bin/dnf', '/bin/dnf'],
+            'pacman': ['/usr/bin/pacman'],
+            'apk': ['/sbin/apk'],
+            'zypper': ['/usr/bin/zypper']
+        }
+        
+        for manager, paths in managers.items():
+            for path in paths:
+                if os.path.exists(path):
+                    return manager
+        
+        return None
+    
+    @staticmethod
+    def check_root():
+        """Check if running as root or with sudo"""
+        return os.geteuid() == 0 or os.environ.get('SUDO_USER') is not None
+    
+    @staticmethod
+    def get_system_resources():
+        """Get system resource information"""
+        try:
+            # Memory info
+            with open('/proc/meminfo', 'r') as f:
+                mem_info = f.read()
+                total_mem = 0
+                for line in mem_info.split('\n'):
+                    if line.startswith('MemTotal:'):
+                        total_mem = int(line.split()[1]) * 1024  # Convert KB to bytes
+                        break
+            
+            # CPU info
+            with open('/proc/cpuinfo', 'r') as f:
+                cpu_info = f.read()
+                cpu_count = cpu_info.count('processor')
+            
+            # Disk info
+            statvfs = os.statvfs('/')
+            disk_total = statvfs.f_frsize * statvfs.f_blocks
+            disk_free = statvfs.f_frsize * statvfs.f_bavail
+            
+            return {
+                'memory': total_mem,
+                'cpu_count': cpu_count,
+                'disk_total': disk_total,
+                'disk_free': disk_free
+            }
+        except:
+            return {
+                'memory': 0,
+                'cpu_count': 1,
+                'disk_total': 0,
+                'disk_free': 0
+            }
+
+class DependencyManager:
+    """Comprehensive dependency management system"""
+    
+    def __init__(self):
+        self.os_info = SystemInfo.get_os_info()
+        self.package_manager = SystemInfo.detect_package_manager()
+        self.is_root = SystemInfo.check_root()
+        self.temp_dir = tempfile.mkdtemp(prefix='mtproxy_')
+        
+        print_colored(f"🔍 Detected OS: {self.os_info.get('NAME', 'Unknown')}", Colors.OKBLUE)
+        print_colored(f"📦 Package Manager: {self.package_manager or 'None'}", Colors.OKBLUE)
+        print_colored(f"🔑 Root Access: {'Yes' if self.is_root else 'No'}", Colors.OKBLUE)
+    
+    def run_command(self, command: str, check: bool = True, capture_output: bool = True):
+        """Run system command with proper error handling"""
+        try:
+            if isinstance(command, str):
+                command = command.split()
+            
+            # Add sudo if not root and command needs it
+            if not self.is_root and command[0] in ['apt', 'yum', 'dnf', 'pacman', 'apk', 'zypper', 'systemctl']:
+                command = ['sudo'] + command
+            
+            result = subprocess.run(
+                command,
+                check=check,
+                capture_output=capture_output,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+            
+            return result
+            
+        except subprocess.TimeoutExpired:
+            print_colored(f"⏰ Command timeout: {' '.join(command)}", Colors.WARNING)
+            return None
+        except subprocess.CalledProcessError as e:
+            if check:
+                print_colored(f"❌ Command failed: {' '.join(command)}", Colors.FAIL)
+                print_colored(f"Error: {e.stderr if e.stderr else str(e)}", Colors.FAIL)
+            return None
+        except Exception as e:
+            print_colored(f"❌ Unexpected error: {e}", Colors.FAIL)
+            return None
+    
+    def update_package_lists(self):
+        """Update package manager repositories"""
+        print_colored("🔄 Updating package lists...", Colors.OKBLUE)
+        
+        commands = {
+            'apt': 'apt update',
+            'yum': 'yum makecache',
+            'dnf': 'dnf makecache',
+            'pacman': 'pacman -Sy',
+            'apk': 'apk update',
+            'zypper': 'zypper refresh'
+        }
+        
+        if self.package_manager in commands:
+            result = self.run_command(commands[self.package_manager])
+            if result and result.returncode == 0:
+                print_colored("✅ Package lists updated successfully!", Colors.OKGREEN)
+                return True
+            else:
+                print_colored("⚠️ Failed to update package lists", Colors.WARNING)
+                return False
+        else:
+            print_colored("⚠️ Unknown package manager, skipping update", Colors.WARNING)
+            return False
+    
+    def install_system_packages(self):
+        """Install required system packages"""
+        print_colored("📦 Installing system dependencies...", Colors.OKBLUE)
+        
+        # Package mappings for different distributions
+        package_maps = {
+            'apt': {
+                'python3': 'python3',
+                'python3-pip': 'python3-pip',
+                'python3-dev': 'python3-dev',
+                'python3-venv': 'python3-venv',
+                'build-essential': 'build-essential',
+                'libssl-dev': 'libssl-dev',
+                'libffi-dev': 'libffi-dev',
+                'libsqlite3-dev': 'libsqlite3-dev',
+                'curl': 'curl',
+                'wget': 'wget',
+                'git': 'git',
+                'htop': 'htop',
+                'iptables': 'iptables',
+                'ufw': 'ufw',
+                'supervisor': 'supervisor',
+                'nginx': 'nginx'
+            },
+            'yum': {
+                'python3': 'python3',
+                'python3-pip': 'python3-pip',
+                'python3-dev': 'python3-devel',
+                'build-essential': 'gcc gcc-c++ make',
+                'libssl-dev': 'openssl-devel',
+                'libffi-dev': 'libffi-devel',
+                'libsqlite3-dev': 'sqlite-devel',
+                'curl': 'curl',
+                'wget': 'wget',
+                'git': 'git',
+                'htop': 'htop',
+                'iptables': 'iptables',
+                'supervisor': 'supervisor',
+                'nginx': 'nginx'
+            },
+            'dnf': {
+                'python3': 'python3',
+                'python3-pip': 'python3-pip',
+                'python3-dev': 'python3-devel',
+                'build-essential': 'gcc gcc-c++ make',
+                'libssl-dev': 'openssl-devel',
+                'libffi-dev': 'libffi-devel',
+                'libsqlite3-dev': 'sqlite-devel',
+                'curl': 'curl',
+                'wget': 'wget',
+                'git': 'git',
+                'htop': 'htop',
+                'iptables': 'iptables',
+                'supervisor': 'supervisor',
+                'nginx': 'nginx'
+            },
+            'pacman': {
+                'python3': 'python',
+                'python3-pip': 'python-pip',
+                'build-essential': 'base-devel',
+                'libssl-dev': 'openssl',
+                'libffi-dev': 'libffi',
+                'curl': 'curl',
+                'wget': 'wget',
+                'git': 'git',
+                'htop': 'htop',
+                'iptables': 'iptables',
+                'supervisor': 'supervisor',
+                'nginx': 'nginx'
+            },
+            'apk': {
+                'python3': 'python3',
+                'python3-pip': 'py3-pip',
+                'python3-dev': 'python3-dev',
+                'build-essential': 'build-base',
+                'libssl-dev': 'openssl-dev',
+                'libffi-dev': 'libffi-dev',
+                'curl': 'curl',
+                'wget': 'wget',
+                'git': 'git',
+                'htop': 'htop',
+                'iptables': 'iptables',
+                'supervisor': 'supervisor',
+                'nginx': 'nginx'
+            }
+        }
+        
+        if self.package_manager not in package_maps:
+            print_colored(f"❌ Unsupported package manager: {self.package_manager}", Colors.FAIL)
+            return False
+        
+        packages = package_maps[self.package_manager]
+        
+        # Update package lists first
+        self.update_package_lists()
+        
+        # Install packages
+        failed_packages = []
+        for package_key, package_names in packages.items():
+            if isinstance(package_names, str):
+                package_names = [package_names]
+            else:
+                package_names = package_names.split()
+            
+            # Try to install each package
+            for package_name in package_names:
+                print_colored(f"Installing {package_name}...", Colors.OKBLUE)
+                
+                install_commands = {
+                    'apt': f'apt install -y {package_name}',
+                    'yum': f'yum install -y {package_name}',
+                    'dnf': f'dnf install -y {package_name}',
+                    'pacman': f'pacman -S --noconfirm {package_name}',
+                    'apk': f'apk add {package_name}',
+                    'zypper': f'zypper install -y {package_name}'
+                }
+                
+                result = self.run_command(install_commands[self.package_manager], check=False)
+                
+                if result and result.returncode == 0:
+                    print_colored(f"✅ {package_name} installed successfully!", Colors.OKGREEN)
+                else:
+                    print_colored(f"⚠️ Failed to install {package_name}", Colors.WARNING)
+                    failed_packages.append(package_name)
+        
+        if failed_packages:
+            print_colored(f"⚠️ Failed to install: {', '.join(failed_packages)}", Colors.WARNING)
+            print_colored("Some packages may not be available on your system", Colors.WARNING)
+        
+        print_colored("✅ System package installation completed!", Colors.OKGREEN)
+        return True
+    
+    def setup_python_environment(self):
+        """Setup Python virtual environment and install packages"""
+        print_colored("🐍 Setting up Python environment...", Colors.OKBLUE)
+        
+        # Create virtual environment
+        venv_path = Path.cwd() / 'venv'
+        if not venv_path.exists():
+            result = self.run_command(f'{sys.executable} -m venv venv')
+            if not result or result.returncode != 0:
+                print_colored("❌ Failed to create virtual environment", Colors.FAIL)
+                return False
+        
+        # Install pip packages
+        pip_packages = [
+            'wheel',
+            'setuptools',
+            'aiohttp>=3.8.0',
+            'aiofiles>=0.8.0',
+            'ujson>=4.0.0',
+            'cryptography>=3.4.8',
+            'psutil>=5.8.0',
+            'qrcode>=7.0.0',
+            'pillow>=8.0.0',
+            'requests>=2.25.0',
+            'websockets>=10.0',
+            'jinja2>=3.0.0',
+            'click>=8.0.0',
+            'tabulate>=0.8.0'
+        ]
+        
+        # Try uvloop for better performance (Unix only)
+        if sys.platform != 'win32':
+            pip_packages.append('uvloop>=0.16.0')
+        
+        pip_executable = venv_path / 'bin' / 'pip'
+        if not pip_executable.exists():
+            pip_executable = 'pip3'
+        
+        for package in pip_packages:
+            print_colored(f"Installing {package}...", Colors.OKBLUE)
+            result = self.run_command(f'{pip_executable} install --upgrade {package}')
+            
+            if result and result.returncode == 0:
+                print_colored(f"✅ {package} installed successfully!", Colors.OKGREEN)
+            else:
+                print_colored(f"⚠️ Failed to install {package}", Colors.WARNING)
+        
+        print_colored("✅ Python environment setup completed!", Colors.OKGREEN)
+        return True
+    
+    def optimize_system(self):
+        """Optimize system for high performance proxy operations"""
+        print_colored("⚡ Optimizing system for high performance...", Colors.OKBLUE)
+        
+        if not self.is_root:
+            print_colored("⚠️ Root access required for system optimization", Colors.WARNING)
+            print_colored("Run with sudo to apply system optimizations", Colors.WARNING)
+            return False
+        
+        # Network optimizations
+        sysctl_configs = [
+            # Network performance
+            'net.core.somaxconn = 65535',
+            'net.core.netdev_max_backlog = 5000',
+            'net.ipv4.tcp_max_syn_backlog = 65535',
+            'net.ipv4.tcp_congestion_control = bbr',
+            'net.ipv4.tcp_fastopen = 3',
+            'net.ipv4.tcp_window_scaling = 1',
+            'net.ipv4.tcp_timestamps = 1',
+            'net.ipv4.tcp_sack = 1',
+            'net.ipv4.tcp_fack = 1',
+            
+            # Memory and file system
+            'fs.file-max = 2097152',
+            'fs.nr_open = 2097152',
+            'vm.swappiness = 10',
+            'vm.vfs_cache_pressure = 50',
+            'vm.dirty_ratio = 15',
+            'vm.dirty_background_ratio = 5',
+            
+            # Security
+            'net.ipv4.conf.default.rp_filter = 1',
+            'net.ipv4.conf.all.rp_filter = 1',
+            'net.ipv4.conf.default.accept_source_route = 0',
+            'net.ipv4.conf.all.accept_source_route = 0',
+        ]
+        
+        # Write sysctl configurations
+        try:
+            with open('/etc/sysctl.d/99-mtproxy.conf', 'w') as f:
+                f.write("# MTProto Proxy optimizations\n")
+                for config in sysctl_configs:
+                    f.write(f"{config}\n")
+            
+            # Apply sysctl changes
+            self.run_command('sysctl --system')
+            
+            print_colored("✅ System network optimizations applied!", Colors.OKGREEN)
+        except Exception as e:
+            print_colored(f"⚠️ Failed to apply sysctl optimizations: {e}", Colors.WARNING)
+        
+        # Set ulimits
+        try:
+            limits_content = """
+# MTProto Proxy limits
+* soft nofile 1048576
+* hard nofile 1048576
+* soft nproc 1048576
+* hard nproc 1048576
+root soft nofile 1048576
+root hard nofile 1048576
+root soft nproc 1048576
+root hard nproc 1048576
+"""
+            
+            with open('/etc/security/limits.d/99-mtproxy.conf', 'w') as f:
+                f.write(limits_content)
+            
+            print_colored("✅ System limits configured!", Colors.OKGREEN)
+        except Exception as e:
+            print_colored(f"⚠️ Failed to set system limits: {e}", Colors.WARNING)
+        
+        # Configure systemd limits
+        try:
+            systemd_config = """
+[Manager]
+DefaultLimitNOFILE=1048576
+DefaultLimitNPROC=1048576
+"""
+            
+            with open('/etc/systemd/system.conf.d/99-mtproxy.conf', 'w') as f:
+                f.write(systemd_config)
+            
+            print_colored("✅ Systemd limits configured!", Colors.OKGREEN)
+        except Exception as e:
+            print_colored(f"⚠️ Failed to configure systemd limits: {e}", Colors.WARNING)
+        
+        print_colored("🔄 System optimization completed! Reboot recommended for all changes to take effect.", Colors.WARNING)
+        return True
+    
+    def setup_firewall(self, proxy_ports: List[int] = None):
+        """Setup firewall rules for proxy ports"""
+        print_colored("🛡️ Configuring firewall...", Colors.OKBLUE)
+        
+        if not self.is_root:
+            print_colored("⚠️ Root access required for firewall configuration", Colors.WARNING)
+            return False
+        
+        # Default ports if none specified
+        if not proxy_ports:
+            proxy_ports = list(range(8080, 8180))  # 100 ports
+        
+        # Try UFW first (Ubuntu/Debian)
+        if shutil.which('ufw'):
+            try:
+                # Enable UFW
+                self.run_command('ufw --force enable')
+                
+                # Allow SSH
+                self.run_command('ufw allow ssh')
+                
+                # Allow proxy ports
+                for port in proxy_ports:
+                    self.run_command(f'ufw allow {port}/tcp')
+                
+                # Allow web interface
+                self.run_command('ufw allow 8080/tcp')
+                
+                print_colored("✅ UFW firewall configured!", Colors.OKGREEN)
+                return True
+                
+            except Exception as e:
+                print_colored(f"⚠️ UFW configuration failed: {e}", Colors.WARNING)
+        
+        # Try iptables as fallback
+        if shutil.which('iptables'):
+            try:
+                # Allow established connections
+                self.run_command('iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT')
+                
+                # Allow loopback
+                self.run_command('iptables -A INPUT -i lo -j ACCEPT')
+                
+                # Allow SSH
+                self.run_command('iptables -A INPUT -p tcp --dport 22 -j ACCEPT')
+                
+                # Allow proxy ports
+                for port in proxy_ports:
+                    self.run_command(f'iptables -A INPUT -p tcp --dport {port} -j ACCEPT')
+                
+                # Allow web interface
+                self.run_command('iptables -A INPUT -p tcp --dport 8080 -j ACCEPT')
+                
+                # Save iptables rules
+                if os.path.exists('/etc/iptables/rules.v4'):
+                    self.run_command('iptables-save > /etc/iptables/rules.v4')
+                elif os.path.exists('/etc/sysconfig/iptables'):
+                    self.run_command('iptables-save > /etc/sysconfig/iptables')
+                
+                print_colored("✅ iptables firewall configured!", Colors.OKGREEN)
+                return True
+                
+            except Exception as e:
+                print_colored(f"⚠️ iptables configuration failed: {e}", Colors.WARNING)
+        
+        print_colored("⚠️ No supported firewall found", Colors.WARNING)
+        return False
+
+# Import required modules with fallback
+try:
+    import aiohttp
+    from aiohttp import web
+    AIOHTTP_AVAILABLE = True
+except ImportError:
+    AIOHTTP_AVAILABLE = False
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
+try:
+    import cryptography
+    from cryptography.fernet import Fernet
+    CRYPTO_AVAILABLE = True
+except ImportError:
+    CRYPTO_AVAILABLE = False
+
+# Try to use uvloop for better performance
+try:
+    import uvloop
+    UVLOOP_AVAILABLE = True
+except ImportError:
+    UVLOOP_AVAILABLE = False
 
 @dataclass
 class ProxyConfig:
@@ -98,16 +631,19 @@ class ProxyConfig:
     created_at: str = ""
     status: str = "stopped"
     max_connections: int = 1000
-    rate_limit: int = 100  # requests per second
-    bandwidth_limit: int = 0  # KB/s, 0 = unlimited
+    rate_limit: int = 100
+    bandwidth_limit: int = 0
     geo_restrictions: List[str] = None
     ssl_enabled: bool = False
+    description: str = ""
     
     def __post_init__(self):
         if not self.created_at:
             self.created_at = datetime.now().isoformat()
         if self.geo_restrictions is None:
             self.geo_restrictions = []
+        
+        # Initialize statistics
         self.stats = {
             "connections": 0,
             "total_connections": 0,
@@ -119,7 +655,8 @@ class ProxyConfig:
             "errors": 0,
             "peak_connections": 0,
             "avg_response_time": 0.0,
-            "blocked_ips": []
+            "blocked_ips": [],
+            "last_activity": None
         }
     
     def validate(self) -> bool:
@@ -128,78 +665,106 @@ class ProxyConfig:
             return False
         if len(self.secret) != 32:  # 16 bytes hex = 32 chars
             return False
+        if not self.proxy_id or not isinstance(self.proxy_id, str):
+            return False
         return True
     
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        result = asdict(self)
+        result['stats'] = self.stats
+        return result
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ProxyConfig':
-        return cls(**data)
+        # Extract stats separately
+        stats = data.pop('stats', {})
+        proxy = cls(**data)
+        proxy.stats.update(stats)
+        return proxy
 
 class SecurityManager:
-    """Enhanced security management"""
+    """Enhanced security management with IP filtering and rate limiting"""
     
-    def __init__(self, secret_key: str = None):
-        self.secret_key = secret_key or Fernet.generate_key()
-        self.cipher = Fernet(self.secret_key)
+    def __init__(self):
         self.blocked_ips = set()
         self.rate_limits = {}
         self.failed_attempts = {}
+        self.whitelist_ips = set()
+        
+        # Load IP databases for geo-blocking (simplified implementation)
+        self.geo_db = self._load_geo_database()
+        
+        # Security settings
+        self.max_requests_per_minute = 60
+        self.max_failed_attempts = 5
+        self.ban_duration = 3600  # 1 hour
     
-    def encrypt_data(self, data: str) -> str:
-        """Encrypt sensitive data"""
-        return self.cipher.encrypt(data.encode()).decode()
-    
-    def decrypt_data(self, encrypted_data: str) -> str:
-        """Decrypt sensitive data"""
-        return self.cipher.decrypt(encrypted_data.encode()).decode()
-    
-    def generate_secure_secret(self) -> str:
-        """Generate cryptographically secure proxy secret"""
-        return secrets.token_hex(16)
+    def _load_geo_database(self) -> Dict[str, str]:
+        """Load simplified geo database (in production, use MaxMind GeoLite2)"""
+        # This is a simplified implementation
+        # In production, you would use a proper GeoIP database
+        return {}
     
     def validate_ip(self, ip: str) -> bool:
-        """Validate IP address against blocklists"""
+        """Validate IP address against security rules"""
+        # Check whitelist first
+        if ip in self.whitelist_ips:
+            return True
+        
+        # Check blacklist
         if ip in self.blocked_ips:
             return False
         
         # Check rate limiting
         now = time.time()
         if ip in self.rate_limits:
-            if now - self.rate_limits[ip]['last_request'] < 1:
-                self.rate_limits[ip]['count'] += 1
-                if self.rate_limits[ip]['count'] > 10:  # 10 req/sec limit
-                    self.blocked_ips.add(ip)
-                    return False
-            else:
-                self.rate_limits[ip] = {'last_request': now, 'count': 1}
+            time_window = now - 60  # 1 minute window
+            self.rate_limits[ip] = [req_time for req_time in self.rate_limits[ip] if req_time > time_window]
+            
+            if len(self.rate_limits[ip]) >= self.max_requests_per_minute:
+                self.blocked_ips.add(ip)
+                return False
+            
+            self.rate_limits[ip].append(now)
         else:
-            self.rate_limits[ip] = {'last_request': now, 'count': 1}
+            self.rate_limits[ip] = [now]
         
         return True
     
     def record_failed_attempt(self, ip: str):
         """Record failed authentication attempt"""
+        now = time.time()
         if ip not in self.failed_attempts:
             self.failed_attempts[ip] = []
         
-        self.failed_attempts[ip].append(time.time())
+        self.failed_attempts[ip].append(now)
         
-        # Block IP after 5 failed attempts in 10 minutes
-        recent_attempts = [
-            t for t in self.failed_attempts[ip] 
-            if time.time() - t < 600
+        # Remove old attempts (older than 10 minutes)
+        self.failed_attempts[ip] = [
+            attempt_time for attempt_time in self.failed_attempts[ip]
+            if now - attempt_time < 600
         ]
         
-        if len(recent_attempts) >= 5:
+        # Ban IP if too many failed attempts
+        if len(self.failed_attempts[ip]) >= self.max_failed_attempts:
             self.blocked_ips.add(ip)
+    
+    def generate_secret(self) -> str:
+        """Generate cryptographically secure proxy secret"""
+        return secrets.token_hex(16)
+    
+    def cleanup_old_bans(self):
+        """Cleanup old IP bans"""
+        # This is a simplified implementation
+        # In production, you would track ban timestamps
+        pass
 
 class DatabaseManager:
     """SQLite database management for persistence"""
     
-    def __init__(self, db_path: str = "mtproxy.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = "data/mtproxy.db"):
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.init_database()
     
     def init_database(self):
@@ -219,10 +784,10 @@ class DatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     proxy_id TEXT,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    connections INTEGER,
-                    bytes_sent INTEGER,
-                    bytes_received INTEGER,
-                    revenue REAL,
+                    connections INTEGER DEFAULT 0,
+                    bytes_sent INTEGER DEFAULT 0,
+                    bytes_received INTEGER DEFAULT 0,
+                    revenue REAL DEFAULT 0.0,
                     FOREIGN KEY (proxy_id) REFERENCES proxies (id)
                 )
             ''')
@@ -236,35 +801,65 @@ class DatabaseManager:
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS system_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create indices for better performance
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_proxy_stats_proxy_id ON proxy_stats(proxy_id)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_proxy_stats_timestamp ON proxy_stats(timestamp)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_events_proxy_id ON events(proxy_id)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)')
+    
+    @contextmanager
+    def get_connection(self):
+        """Get database connection with context manager"""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
     
     def save_proxy(self, proxy: ProxyConfig):
         """Save proxy configuration"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self.get_connection() as conn:
             conn.execute('''
                 INSERT OR REPLACE INTO proxies (id, config, updated_at)
                 VALUES (?, ?, CURRENT_TIMESTAMP)
-            ''', (proxy.proxy_id, ujson.dumps(proxy.to_dict())))
+            ''', (proxy.proxy_id, json.dumps(proxy.to_dict())))
+            conn.commit()
     
     def load_proxies(self) -> Dict[str, ProxyConfig]:
         """Load all proxy configurations"""
         proxies = {}
-        with sqlite3.connect(self.db_path) as conn:
+        with self.get_connection() as conn:
             cursor = conn.execute('SELECT id, config FROM proxies')
             for row in cursor:
-                proxy_data = ujson.loads(row[1])
-                proxies[row[0]] = ProxyConfig.from_dict(proxy_data)
+                try:
+                    proxy_data = json.loads(row[1])
+                    proxy = ProxyConfig.from_dict(proxy_data)
+                    if proxy.validate():
+                        proxies[row[0]] = proxy
+                except Exception as e:
+                    print_colored(f"⚠️ Failed to load proxy {row[0]}: {e}", Colors.WARNING)
         return proxies
     
     def delete_proxy(self, proxy_id: str):
         """Delete proxy from database"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self.get_connection() as conn:
             conn.execute('DELETE FROM proxies WHERE id = ?', (proxy_id,))
             conn.execute('DELETE FROM proxy_stats WHERE proxy_id = ?', (proxy_id,))
             conn.execute('DELETE FROM events WHERE proxy_id = ?', (proxy_id,))
+            conn.commit()
     
     def record_stats(self, proxy: ProxyConfig):
         """Record proxy statistics"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self.get_connection() as conn:
             conn.execute('''
                 INSERT INTO proxy_stats 
                 (proxy_id, connections, bytes_sent, bytes_received, revenue)
@@ -276,253 +871,135 @@ class DatabaseManager:
                 proxy.stats['bytes_received'],
                 proxy.stats['revenue']
             ))
+            conn.commit()
     
     def log_event(self, proxy_id: str, event_type: str, message: str):
         """Log system events"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self.get_connection() as conn:
             conn.execute('''
                 INSERT INTO events (proxy_id, event_type, message)
                 VALUES (?, ?, ?)
             ''', (proxy_id, event_type, message))
-
-class EnhancedDependencyInstaller:
-    """Enhanced dependency installer with Docker support"""
+            conn.commit()
     
-    @staticmethod
-    def detect_system():
-        """Enhanced system detection"""
-        import platform
-        system = platform.system().lower()
-        
-        if system == "linux":
-            try:
-                with open('/etc/os-release', 'r') as f:
-                    content = f.read().lower()
-                if 'ubuntu' in content or 'debian' in content:
-                    return 'debian'
-                elif 'centos' in content or 'rhel' in content or 'fedora' in content:
-                    return 'rhel'
-                elif 'alpine' in content:
-                    return 'alpine'
-            except:
-                pass
-            return 'linux'
-        
-        return system
-    
-    @staticmethod
-    def install_docker():
-        """Install Docker if not present"""
-        print_colored("🐳 Installing Docker...", Colors.OKBLUE)
-        
-        system = EnhancedDependencyInstaller.detect_system()
-        
-        try:
-            if system == 'debian':
-                commands = [
-                    'apt update',
-                    'apt install -y apt-transport-https ca-certificates curl gnupg lsb-release',
-                    'curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg',
-                    'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null',
-                    'apt update',
-                    'apt install -y docker-ce docker-ce-cli containerd.io docker-compose'
-                ]
-            elif system == 'rhel':
-                commands = [
-                    'yum install -y yum-utils',
-                    'yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo',
-                    'yum install -y docker-ce docker-ce-cli containerd.io docker-compose'
-                ]
-            else:
-                print_colored("❌ Unsupported system for Docker installation", Colors.FAIL)
-                return False
+    def get_stats_history(self, proxy_id: str, hours: int = 24) -> List[Dict]:
+        """Get statistics history for a proxy"""
+        with self.get_connection() as conn:
+            cursor = conn.execute('''
+                SELECT timestamp, connections, bytes_sent, bytes_received, revenue
+                FROM proxy_stats
+                WHERE proxy_id = ? AND timestamp > datetime('now', '-{} hours')
+                ORDER BY timestamp DESC
+            '''.format(hours), (proxy_id,))
             
-            for cmd in commands:
-                subprocess.run(cmd.split(), check=True, capture_output=True)
-            
-            # Start Docker service
-            subprocess.run(['systemctl', 'enable', 'docker'], check=True)
-            subprocess.run(['systemctl', 'start', 'docker'], check=True)
-            
-            print_colored("✅ Docker installed successfully!", Colors.OKGREEN)
-            return True
-            
-        except subprocess.CalledProcessError as e:
-            print_colored(f"❌ Error installing Docker: {e}", Colors.FAIL)
-            return False
-    
-    @staticmethod
-    def create_dockerfile():
-        """Create optimized Dockerfile"""
-        dockerfile_content = '''
-FROM python:3.11-alpine
-
-WORKDIR /app
-
-# Install system dependencies
-RUN apk add --no-cache gcc musl-dev libffi-dev openssl-dev
-
-# Copy requirements
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application
-COPY . .
-
-# Create non-root user
-RUN adduser -D -s /bin/sh mtproxy
-
-# Set permissions
-RUN chown -R mtproxy:mtproxy /app
-USER mtproxy
-
-# Expose ports
-EXPOSE 8080-8180
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import socket; socket.create_connection(('localhost', 8080), timeout=3)"
-
-# Start application
-CMD ["python", "mtproxy_manager.py", "run-all"]
-'''
-        
-        with open('Dockerfile', 'w') as f:
-            f.write(dockerfile_content)
-        
-        # Create docker-compose.yml
-        compose_content = '''
-version: '3.8'
-
-services:
-  mtproxy-manager:
-    build: .
-    ports:
-      - "8080-8180:8080-8180"
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - ./config:/app/config
-    environment:
-      - PYTHONUNBUFFERED=1
-    restart: unless-stopped
-    networks:
-      - mtproxy-network
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 256M
-
-networks:
-  mtproxy-network:
-    driver: bridge
-'''
-        
-        with open('docker-compose.yml', 'w') as f:
-            f.write(compose_content)
-        
-        print_colored("✅ Docker configuration files created!", Colors.OKGREEN)
+            return [
+                {
+                    'timestamp': row[0],
+                    'connections': row[1],
+                    'bytes_sent': row[2],
+                    'bytes_received': row[3],
+                    'revenue': row[4]
+                }
+                for row in cursor
+            ]
 
 class MTProtoServer:
-    """Enhanced MTProto proxy server with advanced features"""
+    """MTProto proxy server implementation"""
     
-    def __init__(self, config: ProxyConfig, security_manager: SecurityManager):
+    def __init__(self, config: ProxyConfig, security_manager: SecurityManager, db_manager: DatabaseManager):
         self.config = config
         self.security = security_manager
+        self.db = db_manager
         self.server = None
         self.running = False
         self.clients = {}
         self.middle_proxies = []
         self.logger = self._setup_logger()
-        self.stats_task = None
-        self.cleanup_task = None
         
         # Performance monitoring
         self.response_times = []
-        self.connection_pool = []
-        
-        # Load balancing
         self.current_proxy_index = 0
+        
+        # Tasks
+        self.stats_task = None
+        self.cleanup_task = None
     
     def _setup_logger(self):
-        """Enhanced logging setup"""
+        """Setup logging for this proxy"""
         logger = logging.getLogger(f'mtproxy-{self.config.proxy_id}')
         logger.setLevel(logging.INFO)
         
-        os.makedirs('logs', exist_ok=True)
+        # Create logs directory
+        log_dir = Path('logs')
+        log_dir.mkdir(exist_ok=True)
         
         # File handler
-        file_handler = logging.FileHandler(f'logs/proxy-{self.config.proxy_id}.log')
+        file_handler = logging.FileHandler(log_dir / f'proxy-{self.config.proxy_id}.log')
         file_handler.setFormatter(logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         ))
         logger.addHandler(file_handler)
         
-        # Console handler for errors
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.ERROR)
-        console_handler.setFormatter(logging.Formatter(
-            '%(levelname)s - %(message)s'
-        ))
-        logger.addHandler(console_handler)
-        
         return logger
     
     async def fetch_telegram_config(self):
-        """Enhanced Telegram configuration fetching with caching"""
-        cache_file = f'cache/telegram_config_{datetime.now().strftime("%Y%m%d")}.json'
-        os.makedirs('cache', exist_ok=True)
+        """Fetch Telegram middle proxy configuration"""
+        cache_dir = Path('cache')
+        cache_dir.mkdir(exist_ok=True)
+        cache_file = cache_dir / f'telegram_config_{datetime.now().strftime("%Y%m%d")}.json'
         
         # Try to load from cache first
-        if os.path.exists(cache_file):
+        if cache_file.exists() and (datetime.now() - datetime.fromtimestamp(cache_file.stat().st_mtime)).seconds < 3600:
             try:
-                async with aiofiles.open(cache_file, 'r') as f:
-                    content = await f.read()
-                    data = ujson.loads(content)
+                with open(cache_file, 'r') as f:
+                    data = json.load(f)
                     self.middle_proxies = [(p['ip'], p['port']) for p in data['proxies']]
                     self.logger.info(f"Loaded {len(self.middle_proxies)} proxies from cache")
                     return
             except Exception as e:
                 self.logger.warning(f"Failed to load from cache: {e}")
         
-        # Fetch from multiple sources
+        # Fetch from Telegram
         sources = [
             'https://core.telegram.org/getProxyConfig',
-            'https://telegram.org/getProxyConfig',
-            'https://web.telegram.org/getProxyConfig'
+            'https://telegram.org/getProxyConfig'
         ]
         
         for source in sources:
             try:
-                async with ClientSession() as session:
-                    async with session.get(source, timeout=10) as response:
-                        if response.status == 200:
-                            data = await response.text()
-                            self.middle_proxies = self._parse_proxy_config(data)
-                            
-                            # Cache the result
-                            cache_data = {
-                                'proxies': [{'ip': ip, 'port': port} for ip, port in self.middle_proxies],
-                                'fetched_at': datetime.now().isoformat()
-                            }
-                            async with aiofiles.open(cache_file, 'w') as f:
-                                await f.write(ujson.dumps(cache_data))
-                            
-                            self.logger.info(f"Loaded {len(self.middle_proxies)} middle proxies from {source}")
-                            return
+                if AIOHTTP_AVAILABLE:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(source, timeout=10) as response:
+                            if response.status == 200:
+                                data = await response.text()
+                                self.middle_proxies = self._parse_proxy_config(data)
+                                break
+                else:
+                    # Fallback to urllib
+                    with urllib.request.urlopen(source, timeout=10) as response:
+                        data = response.read().decode('utf-8')
+                        self.middle_proxies = self._parse_proxy_config(data)
+                        break
+                        
             except Exception as e:
                 self.logger.warning(f"Failed to fetch from {source}: {e}")
         
-        self.logger.error("Failed to fetch Telegram configuration from all sources")
+        # Cache the result
+        if self.middle_proxies:
+            try:
+                cache_data = {
+                    'proxies': [{'ip': ip, 'port': port} for ip, port in self.middle_proxies],
+                    'fetched_at': datetime.now().isoformat()
+                }
+                with open(cache_file, 'w') as f:
+                    json.dump(cache_data, f)
+                
+                self.logger.info(f"Cached {len(self.middle_proxies)} middle proxies")
+            except Exception as e:
+                self.logger.warning(f"Failed to cache config: {e}")
     
     def _parse_proxy_config(self, data: str) -> List[Tuple[str, int]]:
-        """Enhanced proxy configuration parsing"""
+        """Parse proxy configuration data"""
         proxies = []
         for line in data.strip().split('\n'):
             line = line.strip()
@@ -532,7 +1009,7 @@ class MTProtoServer:
                     try:
                         ip = parts[0].strip()
                         port = int(parts[1].strip())
-                        # Validate IP format
+                        # Basic IP validation
                         socket.inet_aton(ip)
                         if 1 <= port <= 65535:
                             proxies.append((ip, port))
@@ -541,7 +1018,7 @@ class MTProtoServer:
         return proxies
     
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        """Enhanced client handling with security and monitoring"""
+        """Handle incoming client connection"""
         client_addr = writer.get_extra_info('peername')
         client_ip = client_addr[0] if client_addr else 'unknown'
         client_id = f"{client_ip}:{client_addr[1] if client_addr else 0}"
@@ -565,6 +1042,7 @@ class MTProtoServer:
         self.logger.info(f"New connection from {client_ip}")
         self.config.stats["connections"] += 1
         self.config.stats["total_connections"] += 1
+        self.config.stats["last_activity"] = datetime.now().isoformat()
         
         # Update peak connections
         if self.config.stats["connections"] > self.config.stats["peak_connections"]:
@@ -589,20 +1067,20 @@ class MTProtoServer:
             if len(handshake_data) < 64:
                 raise Exception("Invalid handshake")
             
-            # Enhanced secret validation
+            # Validate handshake
             if not self._validate_handshake(handshake_data):
                 self.security.record_failed_attempt(client_ip)
                 raise Exception("Invalid secret")
             
-            # Connect to Telegram with load balancing
-            tg_reader, tg_writer = await self._connect_to_telegram_lb()
+            # Connect to Telegram
+            tg_reader, tg_writer = await self._connect_to_telegram()
             
             # Forward initial handshake
             tg_writer.write(handshake_data)
             await tg_writer.drain()
             
-            # Start data relay with bandwidth limiting
-            await self._relay_data_enhanced(reader, writer, tg_reader, tg_writer, client_id)
+            # Start data relay
+            await self._relay_data(reader, writer, tg_reader, tg_writer, client_id)
             
         except Exception as e:
             self.logger.error(f"Error handling client {client_ip}: {e}")
@@ -614,11 +1092,12 @@ class MTProtoServer:
                 response_time = time.time() - start_time
                 self.response_times.append(response_time)
                 
-                # Keep only last 100 response times for average calculation
+                # Keep only last 100 response times
                 if len(self.response_times) > 100:
                     self.response_times.pop(0)
                 
-                self.config.stats["avg_response_time"] = sum(self.response_times) / len(self.response_times)
+                if self.response_times:
+                    self.config.stats["avg_response_time"] = sum(self.response_times) / len(self.response_times)
                 
                 del self.clients[client_id]
             
@@ -629,31 +1108,26 @@ class MTProtoServer:
                 pass
     
     def _validate_handshake(self, data: bytes) -> bool:
-        """Enhanced MTProto handshake validation"""
+        """Validate MTProto handshake"""
         try:
             if len(data) < 64:
                 return False
             
-            # Extract secret from handshake
-            # MTProto handshake structure analysis
+            # Extract secret from handshake (simplified)
             secret_bytes = bytes.fromhex(self.config.secret)
-            
-            # Check for standard MTProto patterns
-            # This is a simplified validation - real MTProto validation is more complex
             return len(data) == 64 and len(secret_bytes) == 16
             
-        except Exception as e:
-            self.logger.debug(f"Handshake validation error: {e}")
+        except Exception:
             return False
     
-    async def _connect_to_telegram_lb(self):
-        """Enhanced connection with load balancing and failover"""
+    async def _connect_to_telegram(self):
+        """Connect to Telegram with load balancing"""
         if not self.middle_proxies:
             # Fallback to direct connection
-            return await asyncio.open_connection('149.154.167.51', 443, ssl=True)
+            return await asyncio.open_connection('149.154.167.51', 443)
         
-        # Try middle proxies with round-robin load balancing
-        attempts = min(len(self.middle_proxies), 5)  # Try up to 5 proxies
+        # Try middle proxies with round-robin
+        attempts = min(len(self.middle_proxies), 3)
         
         for _ in range(attempts):
             proxy_ip, proxy_port = self.middle_proxies[self.current_proxy_index]
@@ -670,38 +1144,18 @@ class MTProtoServer:
                 continue
         
         # Fallback to direct connection
-        return await asyncio.open_connection('149.154.167.51', 443, ssl=True)
+        return await asyncio.open_connection('149.154.167.51', 443)
     
-    async def _relay_data_enhanced(self, client_reader, client_writer, tg_reader, tg_writer, client_id):
-        """Enhanced data relay with bandwidth limiting and monitoring"""
+    async def _relay_data(self, client_reader, client_writer, tg_reader, tg_writer, client_id):
+        """Relay data between client and Telegram"""
         
-        async def forward_with_limit(reader, writer, direction, bandwidth_limit=0):
+        async def forward(reader, writer, direction):
             try:
-                last_time = time.time()
-                bytes_transferred = 0
-                
                 while True:
-                    # Read data
                     data = await reader.read(65536)
                     if not data:
                         break
                     
-                    # Bandwidth limiting
-                    if bandwidth_limit > 0:
-                        current_time = time.time()
-                        time_diff = current_time - last_time
-                        
-                        if time_diff > 0:
-                            max_bytes = bandwidth_limit * 1024 * time_diff  # KB/s to bytes
-                            if bytes_transferred > max_bytes:
-                                sleep_time = bytes_transferred / (bandwidth_limit * 1024) - time_diff
-                                if sleep_time > 0:
-                                    await asyncio.sleep(sleep_time)
-                        
-                        bytes_transferred += len(data)
-                        last_time = current_time
-                    
-                    # Write data
                     writer.write(data)
                     await writer.drain()
                     
@@ -727,54 +1181,35 @@ class MTProtoServer:
                 except:
                     pass
         
-        # Start bidirectional relay with bandwidth limiting
+        # Start bidirectional relay
         await asyncio.gather(
-            forward_with_limit(client_reader, tg_writer, 'to_telegram', self.config.bandwidth_limit),
-            forward_with_limit(tg_reader, client_writer, 'from_telegram', self.config.bandwidth_limit),
+            forward(client_reader, tg_writer, 'to_telegram'),
+            forward(tg_reader, client_writer, 'from_telegram'),
             return_exceptions=True
         )
     
     async def _process_sponsored_content(self, data: bytes):
-        """Enhanced sponsored content processing with analytics"""
+        """Process sponsored content for revenue tracking"""
         try:
-            # Analyze data for sponsored content markers
             data_lower = data.lower()
-            
-            # Check for various sponsored content indicators
-            sponsored_markers = [b'sponsored', b'ad_tag', b'promotion', b'advertisement']
+            sponsored_markers = [b'sponsored', b'ad_tag', b'promotion']
             
             for marker in sponsored_markers:
                 if marker in data_lower:
                     self.config.stats['clicks'] += 1
-                    
-                    # Calculate revenue based on engagement
-                    base_revenue = 0.01  # Base $0.01 per interaction
-                    
-                    # Bonus for premium content
-                    if b'premium' in data_lower:
-                        base_revenue *= 2
-                    
-                    self.config.stats['revenue'] += base_revenue
-                    
-                    self.logger.info(f"Sponsored content interaction: +${base_revenue:.3f}")
+                    self.config.stats['revenue'] += 0.01  # $0.01 per interaction
                     break
                     
-        except Exception as e:
-            self.logger.debug(f"Sponsored content processing error: {e}")
+        except Exception:
+            pass
     
     async def start(self):
-        """Enhanced server startup with monitoring tasks"""
+        """Start the proxy server"""
         try:
             print_colored(f"🚀 Starting proxy {self.config.proxy_id} on port {self.config.port}...", Colors.OKBLUE)
             
             # Fetch Telegram configuration
             await self.fetch_telegram_config()
-            
-            # Setup SSL context if enabled
-            ssl_context = None
-            if self.config.ssl_enabled:
-                ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-                # Add SSL certificate loading here if needed
             
             # Start server
             self.server = await asyncio.start_server(
@@ -782,8 +1217,7 @@ class MTProtoServer:
                 '0.0.0.0',
                 self.config.port,
                 reuse_address=True,
-                reuse_port=True,
-                ssl=ssl_context
+                reuse_port=True
             )
             
             self.running = True
@@ -797,35 +1231,38 @@ class MTProtoServer:
             print_colored(f"✅ Proxy {self.config.proxy_id} started successfully!", Colors.OKGREEN)
             self._print_connection_info()
             
+            # Log event
+            self.db.log_event(self.config.proxy_id, "started", f"Proxy started on port {self.config.port}")
+            
             async with self.server:
                 await self.server.serve_forever()
                 
         except Exception as e:
             print_colored(f"❌ Failed to start proxy {self.config.proxy_id}: {e}", Colors.FAIL)
             self.config.status = "error"
+            self.db.log_event(self.config.proxy_id, "error", f"Failed to start: {e}")
     
     async def _stats_monitor(self):
-        """Background task for statistics monitoring"""
+        """Background statistics monitoring"""
         while self.running:
             try:
                 await asyncio.sleep(60)  # Update every minute
                 
-                # Log current statistics
-                self.logger.info(f"Stats - Connections: {self.config.stats['connections']}, "
-                               f"Total: {self.config.stats['total_connections']}, "
-                               f"Revenue: ${self.config.stats['revenue']:.2f}")
+                # Record stats to database
+                self.db.record_stats(self.config)
                 
-                # Calculate uptime
-                if self.config.stats["uptime_start"]:
-                    start_time = datetime.fromisoformat(self.config.stats["uptime_start"])
-                    uptime = (datetime.now() - start_time).total_seconds()
-                    self.config.stats["uptime"] = uptime
+                # Log current status
+                self.logger.info(
+                    f"Stats - Connections: {self.config.stats['connections']}, "
+                    f"Total: {self.config.stats['total_connections']}, "
+                    f"Revenue: ${self.config.stats['revenue']:.2f}"
+                )
                 
             except Exception as e:
                 self.logger.error(f"Stats monitor error: {e}")
     
     async def _cleanup_connections(self):
-        """Background task for cleaning up stale connections"""
+        """Background connection cleanup"""
         while self.running:
             try:
                 await asyncio.sleep(300)  # Cleanup every 5 minutes
@@ -834,8 +1271,8 @@ class MTProtoServer:
                 stale_connections = []
                 
                 for client_id, client_info in self.clients.items():
-                    # Remove connections older than 24 hours
-                    if (current_time - client_info['connected_at']).total_seconds() > 86400:
+                    # Remove connections older than 1 hour of inactivity
+                    if (current_time - client_info['connected_at']).total_seconds() > 3600:
                         stale_connections.append(client_id)
                 
                 for client_id in stale_connections:
@@ -850,9 +1287,9 @@ class MTProtoServer:
                 self.logger.error(f"Cleanup task error: {e}")
     
     def _print_connection_info(self):
-        """Enhanced connection information display"""
+        """Print connection information"""
         try:
-            import urllib.request
+            # Try to get public IP
             public_ip = urllib.request.urlopen('https://api.ipify.org', timeout=5).read().decode().strip()
         except:
             public_ip = "YOUR_SERVER_IP"
@@ -865,18 +1302,10 @@ class MTProtoServer:
         print_colored(f"🔐 Secret: {self.config.secret}", Colors.OKBLUE)
         print_colored(f"⚡ Max Connections: {self.config.max_connections}", Colors.OKBLUE)
         
-        if self.config.bandwidth_limit > 0:
-            print_colored(f"📊 Bandwidth Limit: {self.config.bandwidth_limit} KB/s", Colors.OKBLUE)
-        
-        if self.config.ssl_enabled:
-            print_colored(f"🔒 SSL: Enabled", Colors.OKGREEN)
-        
         if self.config.ad_tag:
             print_colored(f"💰 Ad Tag: {self.config.ad_tag}", Colors.OKGREEN)
-            print_colored(f"📈 Revenue: ${self.config.stats['revenue']:.2f}", Colors.OKGREEN)
         
         # Generate connection links
-        protocol = "https" if self.config.ssl_enabled else "http"
         link_basic = f"tg://proxy?server={public_ip}&port={self.config.port}&secret={self.config.secret}"
         
         print_colored(f"\n🔗 Basic Link:", Colors.OKGREEN, bold=True)
@@ -887,18 +1316,14 @@ class MTProtoServer:
             print_colored(f"\n💰 Sponsored Link:", Colors.OKGREEN, bold=True)
             print_colored(link_sponsored, Colors.OKGREEN)
         
-        # QR Code generation suggestion
-        print_colored(f"\n💡 Generate QR Code:", Colors.WARNING)
-        print_colored(f"python -c \"import qrcode; qrcode.make('{link_basic}').save('proxy_{self.config.proxy_id}_qr.png')\"", Colors.WARNING)
-        
         print_colored(f"{'='*70}\n", Colors.OKCYAN)
     
     def stop(self):
-        """Enhanced server stop with cleanup"""
+        """Stop the proxy server"""
         self.running = False
         self.config.status = "stopped"
         
-        # Cancel monitoring tasks
+        # Cancel tasks
         if self.stats_task:
             self.stats_task.cancel()
         if self.cleanup_task:
@@ -907,27 +1332,28 @@ class MTProtoServer:
         if self.server:
             self.server.close()
         
+        # Log event
+        self.db.log_event(self.config.proxy_id, "stopped", "Proxy stopped")
         print_colored(f"🛑 Proxy {self.config.proxy_id} stopped", Colors.WARNING)
 
 class MultiProxyManager:
-    """Enhanced multi-proxy manager with enterprise features"""
+    """Main proxy management system"""
     
-    def __init__(self, config_file: str = "config/proxies.json"):
-        self.config_file = Path(config_file)
-        self.config_file.parent.mkdir(exist_ok=True)
-        
-        self.proxies: Dict[str, ProxyConfig] = {}
-        self.servers: Dict[str, MTProtoServer] = {}
-        self.web_app = None
+    def __init__(self):
+        # Create necessary directories
+        for directory in ['data', 'logs', 'cache', 'config', 'backups']:
+            Path(directory).mkdir(exist_ok=True)
         
         # Initialize components
         self.security = SecurityManager()
         self.db = DatabaseManager()
+        self.proxies: Dict[str, ProxyConfig] = {}
+        self.servers: Dict[str, MTProtoServer] = {}
         
-        # Load configurations
+        # Load configuration
         self.load_config()
         
-        # Setup enhanced logging
+        # Setup logging
         self.logger = self._setup_logger()
         
         # Background tasks
@@ -935,13 +1361,11 @@ class MultiProxyManager:
         self.backup_task = None
     
     def _setup_logger(self):
-        """Setup enhanced logging"""
-        logger = logging.getLogger('multi-proxy-manager')
+        """Setup main logger"""
+        logger = logging.getLogger('mtproxy-manager')
         logger.setLevel(logging.INFO)
         
-        os.makedirs('logs', exist_ok=True)
-        
-        # File handler with rotation
+        # File handler
         handler = logging.FileHandler('logs/manager.log')
         handler.setFormatter(logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -950,82 +1374,36 @@ class MultiProxyManager:
         
         # Console handler
         console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(logging.Formatter(
-            '%(levelname)s - %(message)s'
-        ))
+        console_handler.setLevel(logging.WARNING)
         logger.addHandler(console_handler)
         
         return logger
     
     def load_config(self):
-        """Enhanced configuration loading with database integration"""
-        # Try to load from database first
-        db_proxies = self.db.load_proxies()
-        if db_proxies:
-            self.proxies = db_proxies
-            self.logger.info(f"Loaded {len(self.proxies)} proxies from database")
-            return
-        
-        # Fallback to JSON file
-        if self.config_file.exists():
-            try:
-                with open(self.config_file, 'r') as f:
-                    data = ujson.load(f)
-                for proxy_data in data.get('proxies', []):
-                    proxy = ProxyConfig.from_dict(proxy_data)
-                    if proxy.validate():
-                        self.proxies[proxy.proxy_id] = proxy
-                        # Migrate to database
-                        self.db.save_proxy(proxy)
-                self.logger.info(f"Loaded {len(self.proxies)} proxies from file and migrated to database")
-            except Exception as e:
-                self.logger.error(f"Error loading config: {e}")
+        """Load proxy configurations"""
+        self.proxies = self.db.load_proxies()
+        self.logger.info(f"Loaded {len(self.proxies)} proxies from database")
     
     def save_config(self):
-        """Enhanced configuration saving"""
-        try:
-            # Save to database
-            for proxy in self.proxies.values():
-                self.db.save_proxy(proxy)
-            
-            # Also save to JSON for backup
-            data = {
-                'proxies': [proxy.to_dict() for proxy in self.proxies.values()],
-                'updated_at': datetime.now().isoformat(),
-                'version': '2.0'
-            }
-            
-            # Create backup
-            if self.config_file.exists():
-                backup_file = self.config_file.with_suffix(f'.backup.{int(time.time())}.json')
-                self.config_file.rename(backup_file)
-            
-            with open(self.config_file, 'w') as f:
-                ujson.dump(data, f, indent=2)
-                
-            self.logger.info("Configuration saved successfully")
-            
-        except Exception as e:
-            self.logger.error(f"Error saving config: {e}")
+        """Save proxy configurations"""
+        for proxy in self.proxies.values():
+            self.db.save_proxy(proxy)
     
     def create_proxy(self, port: int, secret: str = None, ad_tag: str = None, 
-                    max_connections: int = 1000, bandwidth_limit: int = 0,
-                    ssl_enabled: bool = False) -> str:
-        """Enhanced proxy creation with advanced options"""
+                    max_connections: int = 1000, description: str = "") -> str:
+        """Create a new proxy"""
         
-        # Validate port range
+        # Validate port
         if not (1024 <= port <= 65535):
             raise ValueError("Port must be between 1024 and 65535")
         
-        # Check if port is available
         if self._is_port_used(port):
             raise ValueError(f"Port {port} is already in use")
         
-        # Generate secure credentials
+        # Generate proxy ID and secret
         proxy_id = f"proxy_{len(self.proxies)+1:04d}"
         if not secret:
-            secret = self.security.generate_secure_secret()
+            secret = self.security.generate_secret()
         
         # Create proxy configuration
         proxy = ProxyConfig(
@@ -1034,15 +1412,14 @@ class MultiProxyManager:
             secret=secret,
             ad_tag=ad_tag or "",
             max_connections=max_connections,
-            bandwidth_limit=bandwidth_limit,
-            ssl_enabled=ssl_enabled
+            description=description
         )
         
         if not proxy.validate():
             raise ValueError("Invalid proxy configuration")
         
         self.proxies[proxy_id] = proxy
-        self.save_config()
+        self.db.save_proxy(proxy)
         
         # Log event
         self.db.log_event(proxy_id, "created", f"Proxy created on port {port}")
@@ -1051,7 +1428,7 @@ class MultiProxyManager:
         return proxy_id
     
     def _is_port_used(self, port: int) -> bool:
-        """Enhanced port checking"""
+        """Check if port is already in use"""
         # Check existing proxies
         for proxy in self.proxies.values():
             if proxy.port == port:
@@ -1067,32 +1444,8 @@ class MultiProxyManager:
         except:
             return False
     
-    def create_multiple_proxies(self, count: int, start_port: int = 8080, 
-                              ad_tag: str = None, **kwargs) -> List[str]:
-        """Create multiple proxies at once"""
-        created_proxies = []
-        current_port = start_port
-        
-        for i in range(count):
-            # Find next available port
-            while self._is_port_used(current_port):
-                current_port += 1
-                if current_port > 65535:
-                    raise ValueError("No available ports found")
-            
-            try:
-                proxy_id = self.create_proxy(current_port, ad_tag=ad_tag, **kwargs)
-                created_proxies.append(proxy_id)
-                current_port += 1
-            except Exception as e:
-                self.logger.error(f"Failed to create proxy on port {current_port}: {e}")
-                current_port += 1
-        
-        print_colored(f"✅ Created {len(created_proxies)} proxies", Colors.OKGREEN)
-        return created_proxies
-    
     def delete_proxy(self, proxy_id: str):
-        """Enhanced proxy deletion"""
+        """Delete a proxy"""
         if proxy_id not in self.proxies:
             raise ValueError(f"Proxy {proxy_id} not found")
         
@@ -1101,19 +1454,14 @@ class MultiProxyManager:
             self.servers[proxy_id].stop()
             del self.servers[proxy_id]
         
-        # Remove from configuration
+        # Remove from memory and database
         del self.proxies[proxy_id]
-        
-        # Remove from database
         self.db.delete_proxy(proxy_id)
-        
-        # Log event
-        self.db.log_event(proxy_id, "deleted", "Proxy deleted")
         
         print_colored(f"✅ Deleted proxy {proxy_id}", Colors.OKGREEN)
     
     async def start_proxy(self, proxy_id: str):
-        """Enhanced proxy startup"""
+        """Start a specific proxy"""
         if proxy_id not in self.proxies:
             raise ValueError(f"Proxy {proxy_id} not found")
         
@@ -1122,24 +1470,22 @@ class MultiProxyManager:
             return
         
         # Create and start server
-        server = MTProtoServer(self.proxies[proxy_id], self.security)
+        server = MTProtoServer(self.proxies[proxy_id], self.security, self.db)
         self.servers[proxy_id] = server
         
         # Start in background
         asyncio.create_task(server.start())
         
-        # Wait and check if started successfully
+        # Wait and verify
         await asyncio.sleep(2)
         
         if server.running:
-            self.db.log_event(proxy_id, "started", "Proxy started successfully")
             print_colored(f"✅ Started proxy {proxy_id}", Colors.OKGREEN)
         else:
-            self.db.log_event(proxy_id, "error", "Failed to start proxy")
             print_colored(f"❌ Failed to start proxy {proxy_id}", Colors.FAIL)
     
     def stop_proxy(self, proxy_id: str):
-        """Enhanced proxy stop"""
+        """Stop a specific proxy"""
         if proxy_id not in self.servers:
             print_colored(f"⚠️ Proxy {proxy_id} is not running", Colors.WARNING)
             return
@@ -1147,33 +1493,23 @@ class MultiProxyManager:
         self.servers[proxy_id].stop()
         del self.servers[proxy_id]
         
-        self.db.log_event(proxy_id, "stopped", "Proxy stopped")
         print_colored(f"✅ Stopped proxy {proxy_id}", Colors.OKGREEN)
     
     async def start_all_proxies(self):
-        """Start all configured proxies with progress tracking"""
+        """Start all configured proxies"""
         print_colored("🚀 Starting all proxies...", Colors.OKBLUE)
         
-        total_proxies = len(self.proxies)
-        started_count = 0
-        
-        for i, proxy_id in enumerate(self.proxies, 1):
+        tasks = []
+        for proxy_id in self.proxies:
             if proxy_id not in self.servers:
-                try:
-                    await self.start_proxy(proxy_id)
-                    started_count += 1
-                    
-                    # Progress indicator
-                    progress = f"[{i}/{total_proxies}]"
-                    print_colored(f"{progress} Started proxy {proxy_id}", Colors.OKGREEN)
-                    
-                    # Small delay to prevent overwhelming the system
-                    await asyncio.sleep(0.5)
-                    
-                except Exception as e:
-                    print_colored(f"❌ Failed to start {proxy_id}: {e}", Colors.FAIL)
+                tasks.append(asyncio.create_task(self.start_proxy(proxy_id)))
         
-        print_colored(f"✅ Started {started_count}/{total_proxies} proxies", Colors.OKGREEN)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        
+        running_count = len(self.servers)
+        total_count = len(self.proxies)
+        print_colored(f"✅ Started {running_count}/{total_count} proxies", Colors.OKGREEN)
     
     def stop_all_proxies(self):
         """Stop all running proxies"""
@@ -1190,60 +1526,58 @@ class MultiProxyManager:
         print_colored(f"✅ Stopped {stopped_count} proxies", Colors.OKGREEN)
     
     def show_status(self, detailed: bool = False):
-        """Enhanced status display with detailed information"""
-        print_colored("\n📊 Proxy Status Overview", Colors.OKCYAN, bold=True)
-        print_colored("="*90, Colors.OKCYAN)
+        """Show status of all proxies"""
+        print_colored("\n📊 MTProto Proxy Status", Colors.OKCYAN, bold=True)
+        print_colored("="*80, Colors.OKCYAN)
         
         if not self.proxies:
-            print_colored("No proxies configured.", Colors.WARNING)
+            print_colored("No proxies configured. Use 'create' command to add proxies.", Colors.WARNING)
             return
         
+        # Summary statistics
         total_connections = sum(p.stats['connections'] for p in self.proxies.values())
         total_revenue = sum(p.stats['revenue'] for p in self.proxies.values())
         total_traffic = sum(p.stats['bytes_sent'] + p.stats['bytes_received'] for p in self.proxies.values())
+        running_proxies = len(self.servers)
         
-        # Summary statistics
-        print_colored(f"\n📈 Summary Statistics:", Colors.OKBLUE, bold=True)
+        print_colored(f"\n📈 Summary:", Colors.OKBLUE, bold=True)
         print_colored(f"   Total Proxies: {len(self.proxies)}", Colors.OKBLUE)
-        print_colored(f"   Running Proxies: {len(self.servers)}", Colors.OKGREEN)
+        print_colored(f"   Running: {running_proxies}", Colors.OKGREEN)
         print_colored(f"   Active Connections: {total_connections}", Colors.OKBLUE)
         print_colored(f"   Total Revenue: ${total_revenue:.2f}", Colors.OKGREEN)
         print_colored(f"   Total Traffic: {self._format_bytes(total_traffic)}", Colors.OKBLUE)
         
         # Individual proxy status
-        for proxy_id, proxy in self.proxies.items():
+        print_colored(f"\n🔸 Proxy Details:", Colors.OKBLUE, bold=True)
+        
+        for proxy_id, proxy in sorted(self.proxies.items()):
             status_color = Colors.OKGREEN if proxy.status == "running" else Colors.WARNING
             
-            print_colored(f"\n🔸 {proxy_id}:", Colors.OKBLUE, bold=True)
-            print_colored(f"   Status: {proxy.status}", status_color)
-            print_colored(f"   Port: {proxy.port}", Colors.OKBLUE)
-            print_colored(f"   Connections: {proxy.stats['connections']}/{proxy.max_connections}", Colors.OKBLUE)
+            print_colored(f"\n   {proxy_id}:", Colors.OKBLUE, bold=True)
+            print_colored(f"      Status: {proxy.status}", status_color)
+            print_colored(f"      Port: {proxy.port}", Colors.OKBLUE)
+            print_colored(f"      Connections: {proxy.stats['connections']}/{proxy.max_connections}", Colors.OKBLUE)
+            
+            if proxy.description:
+                print_colored(f"      Description: {proxy.description}", Colors.OKBLUE)
             
             if detailed:
-                print_colored(f"   Peak Connections: {proxy.stats['peak_connections']}", Colors.OKBLUE)
-                print_colored(f"   Total Connections: {proxy.stats['total_connections']}", Colors.OKBLUE)
-                print_colored(f"   Bytes Sent: {self._format_bytes(proxy.stats['bytes_sent'])}", Colors.OKBLUE)
-                print_colored(f"   Bytes Received: {self._format_bytes(proxy.stats['bytes_received'])}", Colors.OKBLUE)
-                print_colored(f"   Avg Response Time: {proxy.stats['avg_response_time']:.3f}s", Colors.OKBLUE)
-                print_colored(f"   Errors: {proxy.stats['errors']}", Colors.WARNING if proxy.stats['errors'] > 0 else Colors.OKBLUE)
+                print_colored(f"      Total Connections: {proxy.stats['total_connections']}", Colors.OKBLUE)
+                print_colored(f"      Peak Connections: {proxy.stats['peak_connections']}", Colors.OKBLUE)
+                print_colored(f"      Data Sent: {self._format_bytes(proxy.stats['bytes_sent'])}", Colors.OKBLUE)
+                print_colored(f"      Data Received: {self._format_bytes(proxy.stats['bytes_received'])}", Colors.OKBLUE)
+                print_colored(f"      Errors: {proxy.stats['errors']}", Colors.WARNING if proxy.stats['errors'] > 0 else Colors.OKBLUE)
                 
-                if proxy.bandwidth_limit > 0:
-                    print_colored(f"   Bandwidth Limit: {proxy.bandwidth_limit} KB/s", Colors.OKBLUE)
+                if proxy.stats['avg_response_time'] > 0:
+                    print_colored(f"      Avg Response Time: {proxy.stats['avg_response_time']:.3f}s", Colors.OKBLUE)
                 
-                if proxy.ssl_enabled:
-                    print_colored(f"   SSL: Enabled", Colors.OKGREEN)
+                if proxy.stats['last_activity']:
+                    print_colored(f"      Last Activity: {proxy.stats['last_activity']}", Colors.OKBLUE)
             
             if proxy.ad_tag:
-                print_colored(f"   💰 Revenue: ${proxy.stats['revenue']:.2f}", Colors.OKGREEN)
-                print_colored(f"   📈 Clicks: {proxy.stats['clicks']}", Colors.OKGREEN)
-            
-            # Uptime calculation
-            if proxy.stats.get('uptime_start') and proxy.status == "running":
-                start_time = datetime.fromisoformat(proxy.stats['uptime_start'])
-                uptime = datetime.now() - start_time
-                print_colored(f"   ⏱️  Uptime: {self._format_duration(uptime)}", Colors.OKGREEN)
+                print_colored(f"      💰 Revenue: ${proxy.stats['revenue']:.2f} (Clicks: {proxy.stats['clicks']})", Colors.OKGREEN)
         
-        print_colored("\n" + "="*90, Colors.OKCYAN)
+        print_colored("\n" + "="*80, Colors.OKCYAN)
     
     def _format_bytes(self, bytes_count: int) -> str:
         """Format bytes in human readable format"""
@@ -1253,24 +1587,8 @@ class MultiProxyManager:
             bytes_count /= 1024.0
         return f"{bytes_count:.1f} PB"
     
-    def _format_duration(self, duration: timedelta) -> str:
-        """Format duration in human readable format"""
-        total_seconds = int(duration.total_seconds())
-        days = total_seconds // 86400
-        hours = (total_seconds % 86400) // 3600
-        minutes = (total_seconds % 3600) // 60
-        seconds = total_seconds % 60
-        
-        if days > 0:
-            return f"{days}d {hours}h {minutes}m"
-        elif hours > 0:
-            return f"{hours}h {minutes}m {seconds}s"
-        else:
-            return f"{minutes}m {seconds}s"
-    
     def generate_sponsored_tag(self, channel_username: str) -> str:
-        """Enhanced sponsored tag generation"""
-        # Remove @ if present
+        """Generate sponsored channel tag"""
         channel_username = channel_username.lstrip('@')
         
         # Generate secure tag
@@ -1278,181 +1596,72 @@ class MultiProxyManager:
         tag_hash = hashlib.sha256(tag_data.encode()).hexdigest()[:16]
         
         print_colored(f"💰 Generated ad tag for @{channel_username}: {tag_hash}", Colors.OKGREEN)
-        print_colored(f"📝 Steps to activate:", Colors.WARNING)
-        print_colored(f"   1. Message @MTProtoBot with: /register {tag_hash}", Colors.WARNING)
-        print_colored(f"   2. Add channel @{channel_username} to sponsored list", Colors.WARNING)
-        print_colored(f"   3. Use tag when creating proxies", Colors.WARNING)
+        print_colored(f"📝 Next steps:", Colors.WARNING)
+        print_colored(f"   1. Contact @MTProtoBot on Telegram", Colors.WARNING)
+        print_colored(f"   2. Register your channel and ad tag", Colors.WARNING)
+        print_colored(f"   3. Use the tag when creating sponsored proxies", Colors.WARNING)
         
         return tag_hash
     
     def export_config(self, filename: str = None):
-        """Export configuration for backup"""
+        """Export configuration"""
         if not filename:
-            filename = f"mtproxy_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            filename = f"backups/mtproxy_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         
         export_data = {
-            'version': '2.0',
+            'version': '3.0',
             'exported_at': datetime.now().isoformat(),
             'proxies': [proxy.to_dict() for proxy in self.proxies.values()],
-            'total_proxies': len(self.proxies),
-            'total_revenue': sum(p.stats['revenue'] for p in self.proxies.values())
+            'summary': {
+                'total_proxies': len(self.proxies),
+                'total_revenue': sum(p.stats['revenue'] for p in self.proxies.values())
+            }
         }
         
         with open(filename, 'w') as f:
-            ujson.dump(export_data, f, indent=2)
+            json.dump(export_data, f, indent=2)
         
         print_colored(f"✅ Configuration exported to {filename}", Colors.OKGREEN)
     
     def import_config(self, filename: str):
-        """Import configuration from backup"""
+        """Import configuration"""
         try:
             with open(filename, 'r') as f:
-                data = ujson.load(f)
+                data = json.load(f)
             
             imported_count = 0
             for proxy_data in data.get('proxies', []):
-                proxy = ProxyConfig.from_dict(proxy_data)
-                if proxy.validate() and proxy.proxy_id not in self.proxies:
-                    # Check port availability
-                    if not self._is_port_used(proxy.port):
-                        self.proxies[proxy.proxy_id] = proxy
-                        self.db.save_proxy(proxy)
-                        imported_count += 1
-                    else:
-                        print_colored(f"⚠️ Port {proxy.port} is in use, skipping {proxy.proxy_id}", Colors.WARNING)
+                try:
+                    proxy = ProxyConfig.from_dict(proxy_data)
+                    if proxy.validate() and proxy.proxy_id not in self.proxies:
+                        if not self._is_port_used(proxy.port):
+                            self.proxies[proxy.proxy_id] = proxy
+                            self.db.save_proxy(proxy)
+                            imported_count += 1
+                        else:
+                            print_colored(f"⚠️ Port {proxy.port} in use, skipping {proxy.proxy_id}", Colors.WARNING)
+                except Exception as e:
+                    print_colored(f"⚠️ Failed to import proxy: {e}", Colors.WARNING)
             
-            print_colored(f"✅ Imported {imported_count} proxies from {filename}", Colors.OKGREEN)
+            print_colored(f"✅ Imported {imported_count} proxies", Colors.OKGREEN)
             
         except Exception as e:
             print_colored(f"❌ Failed to import config: {e}", Colors.FAIL)
     
-    def optimize_system(self):
-        """Enhanced system optimization"""
-        print_colored("⚡ Optimizing system for high performance...", Colors.OKBLUE)
-        
-        optimizations = [
-            # Network optimizations
-            "echo 'net.core.somaxconn = 65535' >> /etc/sysctl.conf",
-            "echo 'net.ipv4.tcp_max_syn_backlog = 65535' >> /etc/sysctl.conf",
-            "echo 'net.core.netdev_max_backlog = 5000' >> /etc/sysctl.conf",
-            "echo 'net.ipv4.tcp_congestion_control = bbr' >> /etc/sysctl.conf",
-            "echo 'net.ipv4.tcp_fastopen = 3' >> /etc/sysctl.conf",
-            "echo 'net.ipv4.tcp_window_scaling = 1' >> /etc/sysctl.conf",
-            
-            # File system optimizations
-            "echo 'fs.file-max = 2097152' >> /etc/sysctl.conf",
-            "echo 'fs.nr_open = 2097152' >> /etc/sysctl.conf",
-            
-            # Memory optimizations
-            "echo 'vm.swappiness = 10' >> /etc/sysctl.conf",
-            "echo 'vm.vfs_cache_pressure = 50' >> /etc/sysctl.conf",
-            
-            # Apply changes
-            "sysctl -p"
-        ]
-        
-        try:
-            for cmd in optimizations:
-                subprocess.run(cmd, shell=True, check=True, capture_output=True)
-            
-            # Set ulimits
-            limits_content = """
-# MTProto Proxy optimizations
-* soft nofile 1048576
-* hard nofile 1048576
-* soft nproc 1048576
-* hard nproc 1048576
-"""
-            
-            with open('/etc/security/limits.conf', 'a') as f:
-                f.write(limits_content)
-            
-            print_colored("✅ System optimization completed!", Colors.OKGREEN)
-            print_colored("🔄 Reboot recommended for all changes to take effect", Colors.WARNING)
-            
-        except Exception as e:
-            print_colored(f"⚠️ Some optimizations failed: {e}", Colors.WARNING)
-    
-    def setup_monitoring(self):
-        """Setup system monitoring"""
-        print_colored("📊 Setting up monitoring...", Colors.OKBLUE)
-        
-        if not self.monitor_task:
-            self.monitor_task = asyncio.create_task(self._monitoring_loop())
-        
-        if not self.backup_task:
-            self.backup_task = asyncio.create_task(self._backup_loop())
-        
-        print_colored("✅ Monitoring setup completed!", Colors.OKGREEN)
-    
-    async def _monitoring_loop(self):
-        """Background monitoring loop"""
-        while True:
-            try:
-                await asyncio.sleep(300)  # Monitor every 5 minutes
-                
-                # Record statistics
-                for proxy in self.proxies.values():
-                    if proxy.status == "running":
-                        self.db.record_stats(proxy)
-                
-                # Check system resources
-                cpu_percent = psutil.cpu_percent()
-                memory_percent = psutil.virtual_memory().percent
-                disk_percent = psutil.disk_usage('/').percent
-                
-                if cpu_percent > 90:
-                    self.logger.warning(f"High CPU usage: {cpu_percent}%")
-                
-                if memory_percent > 90:
-                    self.logger.warning(f"High memory usage: {memory_percent}%")
-                
-                if disk_percent > 90:
-                    self.logger.warning(f"High disk usage: {disk_percent}%")
-                
-                # Auto-restart failed proxies
-                for proxy_id, proxy in self.proxies.items():
-                    if proxy.status == "error" and proxy_id not in self.servers:
-                        self.logger.info(f"Attempting to restart failed proxy {proxy_id}")
-                        try:
-                            await self.start_proxy(proxy_id)
-                        except Exception as e:
-                            self.logger.error(f"Failed to restart {proxy_id}: {e}")
-                
-            except Exception as e:
-                self.logger.error(f"Monitoring loop error: {e}")
-    
-    async def _backup_loop(self):
-        """Background backup loop"""
-        while True:
-            try:
-                await asyncio.sleep(3600)  # Backup every hour
-                
-                backup_filename = f"backups/auto_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                os.makedirs('backups', exist_ok=True)
-                
-                self.export_config(backup_filename)
-                
-                # Keep only last 24 backups
-                backup_files = sorted(Path('backups').glob('auto_backup_*.json'))
-                if len(backup_files) > 24:
-                    for old_backup in backup_files[:-24]:
-                        old_backup.unlink()
-                
-            except Exception as e:
-                self.logger.error(f"Backup loop error: {e}")
-    
     def create_systemd_service(self):
-        """Create enhanced systemd service"""
+        """Create systemd service for auto-start"""
+        if not SystemInfo.check_root():
+            print_colored("⚠️ Root access required to create systemd service", Colors.WARNING)
+            return
+        
         service_content = f"""[Unit]
-Description=MTProto Multi-Proxy Manager v2.0
-After=network.target
+Description=MTProto Proxy Manager v3.0
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User={os.getenv('USER', 'root')}
-Group={os.getenv('USER', 'root')}
+User={os.getenv('SUDO_USER', os.getenv('USER', 'root'))}
 WorkingDirectory={os.getcwd()}
 ExecStart={sys.executable} mtproxy_manager.py run-all
 ExecReload=/bin/kill -HUP $MAINPID
@@ -1462,12 +1671,9 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=mtproxy-manager
 
-# Security settings
+# Security
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths={os.getcwd()}
 
 # Resource limits
 LimitNOFILE=1048576
@@ -1475,457 +1681,89 @@ LimitNPROC=1048576
 
 # Environment
 Environment=PYTHONUNBUFFERED=1
-Environment=PYTHONPATH={os.getcwd()}
 
 [Install]
 WantedBy=multi-user.target
 """
         
         try:
-            service_path = "/etc/systemd/system/mtproxy-manager.service"
-            
-            with open(service_path, 'w') as f:
+            with open('/etc/systemd/system/mtproxy-manager.service', 'w') as f:
                 f.write(service_content)
             
             subprocess.run(['systemctl', 'daemon-reload'], check=True)
             subprocess.run(['systemctl', 'enable', 'mtproxy-manager'], check=True)
             
-            print_colored("✅ Systemd service created and enabled!", Colors.OKGREEN)
-            print_colored("Commands:", Colors.OKBLUE)
-            print_colored("  Start:   sudo systemctl start mtproxy-manager", Colors.OKBLUE)
-            print_colored("  Stop:    sudo systemctl stop mtproxy-manager", Colors.OKBLUE)
-            print_colored("  Status:  sudo systemctl status mtproxy-manager", Colors.OKBLUE)
-            print_colored("  Logs:    sudo journalctl -u mtproxy-manager -f", Colors.OKBLUE)
+            print_colored("✅ Systemd service created successfully!", Colors.OKGREEN)
+            print_colored("\nService commands:", Colors.OKBLUE)
+            print_colored("  sudo systemctl start mtproxy-manager", Colors.OKBLUE)
+            print_colored("  sudo systemctl stop mtproxy-manager", Colors.OKBLUE)
+            print_colored("  sudo systemctl status mtproxy-manager", Colors.OKBLUE)
+            print_colored("  sudo journalctl -u mtproxy-manager -f", Colors.OKBLUE)
             
         except Exception as e:
-            print_colored(f"❌ Failed to create service: {e}", Colors.FAIL)
+            print_colored(f"❌ Failed to create systemd service: {e}", Colors.FAIL)
+
+def check_dependencies():
+    """Check and report missing dependencies"""
+    missing = []
     
-    def setup_web_interface(self) -> web.Application:
-        """Setup enhanced web management interface"""
-        print_colored("🌐 Setting up web interface...", Colors.OKBLUE)
-        
-        app = web.Application(middlewares=[self._cors_middleware])
-        
-        # Static files
-        app.router.add_static('/', 'web/', name='static')
-        
-        # API routes
-        app.router.add_get('/', self.web_dashboard)
-        app.router.add_get('/api/status', self.api_status)
-        app.router.add_get('/api/proxies', self.api_get_proxies)
-        app.router.add_post('/api/proxies', self.api_create_proxy)
-        app.router.add_delete('/api/proxies/{proxy_id}', self.api_delete_proxy)
-        app.router.add_post('/api/proxies/{proxy_id}/start', self.api_start_proxy)
-        app.router.add_post('/api/proxies/{proxy_id}/stop', self.api_stop_proxy)
-        app.router.add_get('/api/stats/{proxy_id}', self.api_get_stats)
-        app.router.add_post('/api/generate-tag', self.api_generate_tag)
-        app.router.add_post('/api/optimize-system', self.api_optimize_system)
-        app.router.add_get('/api/export-config', self.api_export_config)
-        app.router.add_post('/api/import-config', self.api_import_config)
-        
-        self.web_app = app
-        return app
+    if not AIOHTTP_AVAILABLE:
+        missing.append('aiohttp')
+    if not PSUTIL_AVAILABLE:
+        missing.append('psutil')
+    if not CRYPTO_AVAILABLE:
+        missing.append('cryptography')
     
-    @middleware
-    async def _cors_middleware(self, request, handler):
-        """CORS middleware for web interface"""
-        response = await handler(request)
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-        return response
+    if missing:
+        print_colored("⚠️ Missing Python dependencies:", Colors.WARNING)
+        for dep in missing:
+            print_colored(f"   - {dep}", Colors.WARNING)
+        print_colored("\nRun 'python mtproxy_manager.py install' to install dependencies", Colors.WARNING)
+        return False
     
-    async def web_dashboard(self, request):
-        """Enhanced web dashboard"""
-        html_content = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTProto Proxy Manager v2.0</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; color: #333; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; text-align: center; }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
-        .stat-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .stat-value { font-size: 2em; font-weight: bold; color: #667eea; }
-        .proxy-list { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .proxy-item { border-bottom: 1px solid #eee; padding: 15px 0; display: flex; justify-content: space-between; align-items: center; }
-        .proxy-info { flex-grow: 1; }
-        .proxy-actions { display: flex; gap: 10px; }
-        button { padding: 8px 16px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
-        .btn-start { background: #4CAF50; color: white; }
-        .btn-stop { background: #f44336; color: white; }
-        .btn-delete { background: #ff9800; color: white; }
-        .status-running { color: #4CAF50; }
-        .status-stopped { color: #f44336; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input, select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
-        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; }
-        .modal-content { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 10px; width: 500px; max-width: 90%; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🚀 MTProto Proxy Manager v2.0</h1>
-            <p>Enterprise-grade proxy management with sponsored channels</p>
-        </div>
-        
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-value" id="total-proxies">0</div>
-                <div>Total Proxies</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="running-proxies">0</div>
-                <div>Running Proxies</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="total-connections">0</div>
-                <div>Active Connections</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="total-revenue">$0.00</div>
-                <div>Total Revenue</div>
-            </div>
-        </div>
-        
-        <div class="proxy-list">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2>Proxy Management</h2>
-                <div>
-                    <button onclick="showCreateModal()" style="background: #667eea; color: white;">Add Proxy</button>
-                    <button onclick="startAllProxies()" class="btn-start">Start All</button>
-                    <button onclick="stopAllProxies()" class="btn-stop">Stop All</button>
-                </div>
-            </div>
-            <div id="proxy-container">
-                <!-- Proxies will be loaded here -->
-            </div>
-        </div>
-    </div>
-    
-    <!-- Create Proxy Modal -->
-    <div id="createModal" class="modal">
-        <div class="modal-content">
-            <h3>Create New Proxy</h3>
-            <form id="createForm">
-                <div class="form-group">
-                    <label>Port:</label>
-                    <input type="number" id="port" min="1024" max="65535" required>
-                </div>
-                <div class="form-group">
-                    <label>Secret (optional):</label>
-                    <input type="text" id="secret" placeholder="Auto-generated if empty">
-                </div>
-                <div class="form-group">
-                    <label>Ad Tag (optional):</label>
-                    <input type="text" id="ad_tag" placeholder="For sponsored channels">
-                </div>
-                <div class="form-group">
-                    <label>Max Connections:</label>
-                    <input type="number" id="max_connections" value="1000" min="1" max="10000">
-                </div>
-                <div class="form-group">
-                    <label>Bandwidth Limit (KB/s, 0 = unlimited):</label>
-                    <input type="number" id="bandwidth_limit" value="0" min="0">
-                </div>
-                <div style="display: flex; gap: 10px; margin-top: 20px;">
-                    <button type="submit" style="background: #4CAF50; color: white; flex: 1;">Create Proxy</button>
-                    <button type="button" onclick="hideCreateModal()" style="background: #ccc; flex: 1;">Cancel</button>
-                </div>
-            </form>
-        </div>
-    </div>
-    
-    <script>
-        // Load data on page load
-        document.addEventListener('DOMContentLoaded', function() {
-            loadProxies();
-            loadStats();
-            setInterval(loadStats, 30000); // Update every 30 seconds
-        });
-        
-        async function loadProxies() {
-            try {
-                const response = await fetch('/api/proxies');
-                const proxies = await response.json();
-                
-                const container = document.getElementById('proxy-container');
-                container.innerHTML = '';
-                
-                proxies.forEach(proxy => {
-                    const proxyDiv = document.createElement('div');
-                    proxyDiv.className = 'proxy-item';
-                    proxyDiv.innerHTML = `
-                        <div class="proxy-info">
-                            <strong>${proxy.proxy_id}</strong> - Port: ${proxy.port}
-                            <br>
-                            Status: <span class="status-${proxy.status}">${proxy.status}</span>
-                            ${proxy.ad_tag ? `<br>Ad Tag: ${proxy.ad_tag}` : ''}
-                            <br>
-                            Connections: ${proxy.stats.connections}/${proxy.max_connections}
-                            ${proxy.stats.revenue > 0 ? `<br>Revenue: $${proxy.stats.revenue.toFixed(2)}` : ''}
-                        </div>
-                        <div class="proxy-actions">
-                            ${proxy.status === 'running' ? 
-                                `<button class="btn-stop" onclick="stopProxy('${proxy.proxy_id}')">Stop</button>` :
-                                `<button class="btn-start" onclick="startProxy('${proxy.proxy_id}')">Start</button>`
-                            }
-                            <button class="btn-delete" onclick="deleteProxy('${proxy.proxy_id}')">Delete</button>
-                        </div>
-                    `;
-                    container.appendChild(proxyDiv);
-                });
-            } catch (error) {
-                console.error('Error loading proxies:', error);
-            }
-        }
-        
-        async function loadStats() {
-            try {
-                const response = await fetch('/api/status');
-                const stats = await response.json();
-                
-                document.getElementById('total-proxies').textContent = stats.total_proxies;
-                document.getElementById('running-proxies').textContent = stats.running_proxies;
-                document.getElementById('total-connections').textContent = stats.total_connections;
-                document.getElementById('total-revenue').textContent = `$${stats.total_revenue.toFixed(2)}`;
-            } catch (error) {
-                console.error('Error loading stats:', error);
-            }
-        }
-        
-        function showCreateModal() {
-            document.getElementById('createModal').style.display = 'block';
-        }
-        
-        function hideCreateModal() {
-            document.getElementById('createModal').style.display = 'none';
-        }
-        
-        document.getElementById('createForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const formData = {
-                port: parseInt(document.getElementById('port').value),
-                secret: document.getElementById('secret').value || undefined,
-                ad_tag: document.getElementById('ad_tag').value || undefined,
-                max_connections: parseInt(document.getElementById('max_connections').value),
-                bandwidth_limit: parseInt(document.getElementById('bandwidth_limit').value)
-            };
-            
-            try {
-                const response = await fetch('/api/proxies', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(formData)
-                });
-                
-                if (response.ok) {
-                    hideCreateModal();
-                    loadProxies();
-                    loadStats();
-                } else {
-                    alert('Error creating proxy');
-                }
-            } catch (error) {
-                alert('Error creating proxy');
-            }
-        });
-        
-        async function startProxy(proxyId) {
-            try {
-                await fetch(`/api/proxies/${proxyId}/start`, {method: 'POST'});
-                loadProxies();
-                loadStats();
-            } catch (error) {
-                alert('Error starting proxy');
-            }
-        }
-        
-        async function stopProxy(proxyId) {
-            try {
-                await fetch(`/api/proxies/${proxyId}/stop`, {method: 'POST'});
-                loadProxies();
-                loadStats();
-            } catch (error) {
-                alert('Error stopping proxy');
-            }
-        }
-        
-        async function deleteProxy(proxyId) {
-            if (confirm('Are you sure you want to delete this proxy?')) {
-                try {
-                    await fetch(`/api/proxies/${proxyId}`, {method: 'DELETE'});
-                    loadProxies();
-                    loadStats();
-                } catch (error) {
-                    alert('Error deleting proxy');
-                }
-            }
-        }
-        
-        async function startAllProxies() {
-            try {
-                // Implementation would depend on API endpoint
-                alert('Starting all proxies...');
-            } catch (error) {
-                alert('Error starting all proxies');
-            }
-        }
-        
-        async function stopAllProxies() {
-            if (confirm('Are you sure you want to stop all proxies?')) {
-                try {
-                    // Implementation would depend on API endpoint
-                    alert('Stopping all proxies...');
-                } catch (error) {
-                    alert('Error stopping all proxies');
-                }
-            }
-        }
-    </script>
-</body>
-</html>
-        """
-        return web.Response(text=html_content, content_type='text/html')
-    
-    # API endpoints
-    async def api_status(self, request):
-        """API endpoint for status"""
-        total_connections = sum(p.stats['connections'] for p in self.proxies.values())
-        total_revenue = sum(p.stats['revenue'] for p in self.proxies.values())
-        
-        return web.json_response({
-            'total_proxies': len(self.proxies),
-            'running_proxies': len(self.servers),
-            'total_connections': total_connections,
-            'total_revenue': total_revenue
-        })
-    
-    async def api_get_proxies(self, request):
-        """API endpoint to get all proxies"""
-        return web.json_response([proxy.to_dict() for proxy in self.proxies.values()])
-    
-    async def api_create_proxy(self, request):
-        """API endpoint to create proxy"""
-        try:
-            data = await request.json()
-            proxy_id = self.create_proxy(**data)
-            return web.json_response({'proxy_id': proxy_id, 'status': 'created'})
-        except Exception as e:
-            return web.json_response({'error': str(e)}, status=400)
-    
-    async def api_delete_proxy(self, request):
-        """API endpoint to delete proxy"""
-        try:
-            proxy_id = request.match_info['proxy_id']
-            self.delete_proxy(proxy_id)
-            return web.json_response({'status': 'deleted'})
-        except Exception as e:
-            return web.json_response({'error': str(e)}, status=400)
-    
-    async def api_start_proxy(self, request):
-        """API endpoint to start proxy"""
-        try:
-            proxy_id = request.match_info['proxy_id']
-            await self.start_proxy(proxy_id)
-            return web.json_response({'status': 'started'})
-        except Exception as e:
-            return web.json_response({'error': str(e)}, status=400)
-    
-    async def api_stop_proxy(self, request):
-        """API endpoint to stop proxy"""
-        try:
-            proxy_id = request.match_info['proxy_id']
-            self.stop_proxy(proxy_id)
-            return web.json_response({'status': 'stopped'})
-        except Exception as e:
-            return web.json_response({'error': str(e)}, status=400)
-    
-    async def api_get_stats(self, request):
-        """API endpoint to get proxy statistics"""
-        try:
-            proxy_id = request.match_info['proxy_id']
-            if proxy_id not in self.proxies:
-                return web.json_response({'error': 'Proxy not found'}, status=404)
-            
-            return web.json_response(self.proxies[proxy_id].stats)
-        except Exception as e:
-            return web.json_response({'error': str(e)}, status=400)
-    
-    async def api_generate_tag(self, request):
-        """API endpoint to generate sponsored tag"""
-        try:
-            data = await request.json()
-            channel = data.get('channel', '')
-            tag = self.generate_sponsored_tag(channel)
-            return web.json_response({'tag': tag})
-        except Exception as e:
-            return web.json_response({'error': str(e)}, status=400)
-    
-    async def api_optimize_system(self, request):
-        """API endpoint to optimize system"""
-        try:
-            self.optimize_system()
-            return web.json_response({'status': 'optimized'})
-        except Exception as e:
-            return web.json_response({'error': str(e)}, status=400)
-    
-    async def api_export_config(self, request):
-        """API endpoint to export configuration"""
-        try:
-            filename = f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            self.export_config(filename)
-            return web.json_response({'filename': filename})
-        except Exception as e:
-            return web.json_response({'error': str(e)}, status=400)
-    
-    async def api_import_config(self, request):
-        """API endpoint to import configuration"""
-        try:
-            data = await request.json()
-            filename = data.get('filename', '')
-            self.import_config(filename)
-            return web.json_response({'status': 'imported'})
-        except Exception as e:
-            return web.json_response({'error': str(e)}, status=400)
+    return True
 
 def main():
-    """Enhanced main function with comprehensive CLI"""
-    parser = argparse.ArgumentParser(description='Advanced MTProto Proxy Manager v2.0')
+    """Main application entry point"""
+    parser = argparse.ArgumentParser(
+        description='Advanced MTProto Proxy Manager v3.0',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python mtproxy_manager.py install              # Install dependencies
+  python mtproxy_manager.py create 8080          # Create proxy on port 8080
+  python mtproxy_manager.py start proxy_001      # Start specific proxy
+  python mtproxy_manager.py run-all              # Start all proxies
+  python mtproxy_manager.py status --detailed    # Show detailed status
+  python mtproxy_manager.py generate-tag mychannel  # Generate sponsored tag
+        """
+    )
     
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     
     # Install command
-    install_parser = subparsers.add_parser('install', help='Install dependencies and optimize system')
-    install_parser.add_argument('--docker', action='store_true', help='Also install Docker')
-    install_parser.add_argument('--optimize', action='store_true', help='Optimize system settings')
+    install_parser = subparsers.add_parser('install', help='Install system dependencies and optimize')
+    install_parser.add_argument('--no-optimize', action='store_true', help='Skip system optimization')
+    install_parser.add_argument('--firewall', action='store_true', help='Configure firewall')
     
-    # Create command
-    create_parser = subparsers.add_parser('create', help='Create a new proxy')
-    create_parser.add_argument('port', type=int, help='Proxy port')
+    # Create commands
+    create_parser = subparsers.add_parser('create', help='Create new proxy')
+    create_parser.add_argument('port', type=int, help='Port number (1024-65535)')
     create_parser.add_argument('--secret', help='Custom secret (auto-generated if not provided)')
     create_parser.add_argument('--ad-tag', help='Sponsored channel ad tag')
     create_parser.add_argument('--max-connections', type=int, default=1000, help='Maximum connections')
-    create_parser.add_argument('--bandwidth-limit', type=int, default=0, help='Bandwidth limit in KB/s')
-    create_parser.add_argument('--ssl', action='store_true', help='Enable SSL')
+    create_parser.add_argument('--description', help='Proxy description')
     
-    # Create multiple command
-    create_multi_parser = subparsers.add_parser('create-multiple', help='Create multiple proxies')
-    create_multi_parser.add_argument('count', type=int, help='Number of proxies to create')
-    create_multi_parser.add_argument('--start-port', type=int, default=8080, help='Starting port')
-    create_multi_parser.add_argument('--ad-tag', help='Sponsored channel ad tag')
+    create_bulk_parser = subparsers.add_parser('create-bulk', help='Create multiple proxies')
+    create_bulk_parser.add_argument('count', type=int, help='Number of proxies to create')
+    create_bulk_parser.add_argument('--start-port', type=int, default=8080, help='Starting port number')
+    create_bulk_parser.add_argument('--ad-tag', help='Sponsored channel ad tag for all proxies')
     
     # Management commands
-    subparsers.add_parser('list', help='List all proxies')
-    subparsers.add_parser('status', help='Show detailed status')
+    list_parser = subparsers.add_parser('list', help='List all proxies')
+    
+    status_parser = subparsers.add_parser('status', help='Show proxy status')
+    status_parser.add_argument('--detailed', action='store_true', help='Show detailed information')
     
     start_parser = subparsers.add_parser('start', help='Start proxy')
     start_parser.add_argument('proxy_id', help='Proxy ID to start')
@@ -1935,6 +1773,7 @@ def main():
     
     delete_parser = subparsers.add_parser('delete', help='Delete proxy')
     delete_parser.add_argument('proxy_id', help='Proxy ID to delete')
+    delete_parser.add_argument('--force', action='store_true', help='Force deletion without confirmation')
     
     # Bulk operations
     subparsers.add_parser('start-all', help='Start all proxies')
@@ -1945,13 +1784,9 @@ def main():
     tag_parser = subparsers.add_parser('generate-tag', help='Generate sponsored channel tag')
     tag_parser.add_argument('channel', help='Channel username (without @)')
     
-    subparsers.add_parser('optimize', help='Optimize system for high performance')
+    # System commands
+    subparsers.add_parser('optimize', help='Optimize system settings')
     subparsers.add_parser('service', help='Create systemd service')
-    
-    # Web interface
-    web_parser = subparsers.add_parser('web', help='Start web interface')
-    web_parser.add_argument('--port', type=int, default=8080, help='Web interface port')
-    web_parser.add_argument('--host', default='0.0.0.0', help='Web interface host')
     
     # Backup/restore
     export_parser = subparsers.add_parser('export', help='Export configuration')
@@ -1965,58 +1800,102 @@ def main():
     
     args = parser.parse_args()
     
+    # Show banner and help if no command
     if not args.command:
         print_banner()
         parser.print_help()
         return
     
-    # Set up uvloop for better performance
-    if sys.platform != 'win32':
-        try:
-            uvloop.install()
-        except ImportError:
-            pass
+    # Handle install command first (may not have dependencies)
+    if args.command == 'install':
+        print_banner()
+        print_colored("🚀 Starting installation process...", Colors.OKBLUE)
+        
+        # Check system requirements
+        sys_info = SystemInfo.get_system_resources()
+        print_colored(f"💾 Available RAM: {sys_info['memory'] // (1024*1024*1024)} GB", Colors.OKBLUE)
+        print_colored(f"🏭 CPU Cores: {sys_info['cpu_count']}", Colors.OKBLUE)
+        
+        dependency_manager = DependencyManager()
+        
+        # Install system packages
+        if not dependency_manager.install_system_packages():
+            print_colored("❌ System package installation failed", Colors.FAIL)
+            return
+        
+        # Setup Python environment
+        if not dependency_manager.setup_python_environment():
+            print_colored("❌ Python environment setup failed", Colors.FAIL)
+            return
+        
+        # Optimize system
+        if not args.no_optimize:
+            dependency_manager.optimize_system()
+        
+        # Configure firewall
+        if args.firewall:
+            dependency_manager.setup_firewall()
+        
+        print_colored("\n🎉 Installation completed successfully!", Colors.OKGREEN, bold=True)
+        print_colored("You can now create and manage MTProto proxies.", Colors.OKGREEN)
+        print_colored("\nNext steps:", Colors.OKBLUE)
+        print_colored("  python mtproxy_manager.py create 8080", Colors.OKBLUE)
+        print_colored("  python mtproxy_manager.py run-all", Colors.OKBLUE)
+        return
     
-    manager = MultiProxyManager()
+    # For all other commands, check dependencies
+    if not check_dependencies():
+        return
+    
+    print_banner()
+    
+    # Use uvloop if available
+    if UVLOOP_AVAILABLE and hasattr(uvloop, 'install'):
+        uvloop.install()
+    
+    # Initialize manager
+    try:
+        manager = MultiProxyManager()
+    except Exception as e:
+        print_colored(f"❌ Failed to initialize manager: {e}", Colors.FAIL)
+        print_colored("Try running 'python mtproxy_manager.py install' first", Colors.WARNING)
+        return
     
     async def run_async_command():
         try:
-            if args.command == 'install':
-                installer = EnhancedDependencyInstaller()
-                installer.install_system_packages()
-                installer.install_python_packages()
-                
-                if args.docker:
-                    installer.install_docker()
-                    installer.create_dockerfile()
-                
-                if args.optimize:
-                    manager.optimize_system()
-            
-            elif args.command == 'create':
+            if args.command == 'create':
                 proxy_id = manager.create_proxy(
                     port=args.port,
                     secret=args.secret,
                     ad_tag=args.ad_tag,
                     max_connections=args.max_connections,
-                    bandwidth_limit=args.bandwidth_limit,
-                    ssl_enabled=args.ssl
+                    description=args.description or ""
                 )
-                print_colored(f"Created proxy: {proxy_id}", Colors.OKGREEN)
+                print_colored(f"📝 Proxy created: {proxy_id}", Colors.OKGREEN)
             
-            elif args.command == 'create-multiple':
-                proxy_ids = manager.create_multiple_proxies(
-                    count=args.count,
-                    start_port=args.start_port,
-                    ad_tag=args.ad_tag
-                )
-                print_colored(f"Created {len(proxy_ids)} proxies", Colors.OKGREEN)
+            elif args.command == 'create-bulk':
+                created = []
+                start_port = args.start_port
+                for i in range(args.count):
+                    port = start_port + i
+                    while manager._is_port_used(port):
+                        port += 1
+                    
+                    try:
+                        proxy_id = manager.create_proxy(
+                            port=port,
+                            ad_tag=args.ad_tag,
+                            description=f"Bulk proxy {i+1}/{args.count}"
+                        )
+                        created.append(proxy_id)
+                        print_colored(f"Created {proxy_id} on port {port}", Colors.OKGREEN)
+                    except Exception as e:
+                        print_colored(f"❌ Failed to create proxy on port {port}: {e}", Colors.FAIL)
+                
+                print_colored(f"✅ Created {len(created)}/{args.count} proxies", Colors.OKGREEN)
             
-            elif args.command == 'list':
-                manager.show_status()
-            
-            elif args.command == 'status':
-                manager.show_status(detailed=True)
+            elif args.command in ['list', 'status']:
+                manager.show_status(detailed=args.command == 'status' and getattr(args, 'detailed', False))
             
             elif args.command == 'start':
                 await manager.start_proxy(args.proxy_id)
@@ -2025,6 +1904,12 @@ def main():
                 manager.stop_proxy(args.proxy_id)
             
             elif args.command == 'delete':
+                if not args.force:
+                    confirm = input(f"Delete proxy {args.proxy_id}? (y/N): ").lower().strip()
+                    if confirm != 'y':
+                        print_colored("Operation cancelled", Colors.WARNING)
+                        return
+                
                 manager.delete_proxy(args.proxy_id)
             
             elif args.command == 'start-all':
@@ -2034,37 +1919,29 @@ def main():
                 manager.stop_all_proxies()
             
             elif args.command == 'run-all':
-                print_colored("Starting all proxies and monitoring...", Colors.OKGREEN)
-                await manager.start_all_proxies()
-                manager.setup_monitoring()
+                print_colored("🚀 Starting all proxies and entering monitoring mode...", Colors.OKGREEN, bold=True)
                 
-                # Keep running until interrupted
+                # Start all proxies
+                await manager.start_all_proxies()
+                
+                # Show initial status
+                manager.show_status()
+                
+                print_colored("\n📊 Monitoring mode active. Press Ctrl+C to stop.", Colors.OKCYAN, bold=True)
+                print_colored("Status updates every 60 seconds...\n", Colors.OKCYAN)
+                
+                # Monitor loop
                 try:
                     while True:
                         await asyncio.sleep(60)
+                        print_colored(f"\n🔄 Status Update - {datetime.now().strftime('%H:%M:%S')}", Colors.OKCYAN)
                         manager.show_status()
                 except KeyboardInterrupt:
-                    print_colored("\nShutting down...", Colors.WARNING)
+                    print_colored("\n🛑 Shutting down...", Colors.WARNING)
                     manager.stop_all_proxies()
             
             elif args.command == 'generate-tag':
                 manager.generate_sponsored_tag(args.channel)
-            
-            elif args.command == 'optimize':
-                manager.optimize_system()
-            
-            elif args.command == 'service':
-                manager.create_systemd_service()
-            
-            elif args.command == 'web':
-                app = manager.setup_web_interface()
-                print_colored(f"🌐 Starting web interface on http://{args.host}:{args.port}", Colors.OKGREEN)
-                
-                # Start monitoring
-                manager.setup_monitoring()
-                
-                # Run web server
-                web.run_app(app, host=args.host, port=args.port)
             
             elif args.command == 'export':
                 manager.export_config(args.filename)
@@ -2073,48 +1950,53 @@ def main():
                 manager.import_config(args.filename)
             
             elif args.command == 'monitor':
-                print_colored("Starting monitoring mode...", Colors.OKGREEN)
-                manager.setup_monitoring()
-                
+                print_colored("📊 Starting monitoring mode...", Colors.OKCYAN)
                 try:
                     while True:
+                        manager.show_status(detailed=True)
                         await asyncio.sleep(30)
-                        manager.show_status()
                 except KeyboardInterrupt:
                     print_colored("\nMonitoring stopped", Colors.WARNING)
-        
+            
         except KeyboardInterrupt:
             print_colored("\nOperation cancelled by user", Colors.WARNING)
         except Exception as e:
-            print_colored(f"Error: {e}", Colors.FAIL)
-            sys.exit(1)
+            print_colored(f"❌ Error: {e}", Colors.FAIL)
+            import traceback
+            traceback.print_exc()
     
     # Handle sync commands
     if args.command in ['list', 'status', 'stop', 'delete', 'stop-all', 'generate-tag', 'optimize', 'service', 'export', 'import']:
-        if args.command == 'list':
-            manager.show_status()
-        elif args.command == 'status':
-            manager.show_status(detailed=True)
+        if args.command in ['list', 'status']:
+            manager.show_status(detailed=args.command == 'status' and getattr(args, 'detailed', False))
         elif args.command == 'stop':
             manager.stop_proxy(args.proxy_id)
         elif args.command == 'delete':
+            if not getattr(args, 'force', False):
+                confirm = input(f"Delete proxy {args.proxy_id}? (y/N): ").lower().strip()
+                if confirm != 'y':
+                    print_colored("Operation cancelled", Colors.WARNING)
+                    return
             manager.delete_proxy(args.proxy_id)
         elif args.command == 'stop-all':
             manager.stop_all_proxies()
         elif args.command == 'generate-tag':
             manager.generate_sponsored_tag(args.channel)
         elif args.command == 'optimize':
-            manager.optimize_system()
+            dependency_manager = DependencyManager()
+            dependency_manager.optimize_system()
         elif args.command == 'service':
             manager.create_systemd_service()
         elif args.command == 'export':
-            manager.export_config(args.filename)
+            manager.export_config(getattr(args, 'filename', None))
         elif args.command == 'import':
             manager.import_config(args.filename)
     else:
         # Handle async commands
-        asyncio.run(run_async_command())
+        try:
+            asyncio.run(run_async_command())
+        except KeyboardInterrupt:
+            print_colored("\nOperation cancelled", Colors.WARNING)
 
 if __name__ == "__main__":
-    print_banner()
     main()
